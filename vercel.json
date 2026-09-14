@@ -1,0 +1,29 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["sfo1"],
+  "functions": {
+    "api/downloader.mjs": {
+      "maxDuration": 60,
+      "includeFiles": "node_modules/@sparticuz/chromium/bin/**"
+    },
+    "api/video.mjs": {
+      "maxDuration": 60,
+      "includeFiles": "node_modules/@sparticuz/chromium/bin/**"
+    },
+    "api/video-verified.mjs": {
+      "maxDuration": 30
+    },
+    "api/media_proxy.py": {
+      "maxDuration": 60
+    }
+  },
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {"key": "X-Robots-Tag", "value": "noindex, nofollow, noarchive, nosnippet"},
+        {"key": "Cache-Control", "value": "no-store, max-age=0"}
+      ]
+    }
+  ]
+}
