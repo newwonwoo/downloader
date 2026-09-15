@@ -2,11 +2,17 @@
 
 Standalone video downloader migrated from `newwonwoo/unisquads`.
 
-## Layout
+**Deployment target: Render only.**
 
-- `/` — static downloader UI for Vercel
-- `api/` — resolver and media proxy Vercel Functions
-- `downloader-worker/` — Render FastAPI worker that prepares complete MP4 files
+## Production architecture
+
+- `/` — static downloader UI served by Render (`downloader-web`)
+- `gateway.js` — connects the UI directly to the Render worker
+- `file-job-client.js` — prepares and resumes complete MP4 file jobs
+- `downloader-worker/` — Render FastAPI worker for resolving HLS, remuxing to MP4, and temporary file delivery
+- `.github/workflows/` — integration and production smoke gates
+
+There is no Vercel runtime in the active application path.
 
 ## Render worker
 
