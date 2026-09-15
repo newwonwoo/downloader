@@ -5,6 +5,7 @@ from urllib.parse import urljoin, urlparse
 
 from curl_cffi import requests
 from fastapi import HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 SOURCE_HOSTS = {'njavtv.com', 'www.njavtv.com'}
@@ -12,6 +13,7 @@ MEDIA_SUFFIXES = ('surrit.com', 'nineyu.com')
 UUID_RE = re.compile(r'([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})', re.I)
 M3U8_RE = re.compile(r'https?://[^\s\"\'<>\\]+?\.m3u8(?:\?[^\s\"\'<>\\]*)?', re.I)
 QUALITY_ORDER = ('1920x1080', '1280x720', '842x480', '640x360', '1080p', '720p', '480p', '360p')
+MIGRATED_WEB_ORIGIN = 'https://downloader-web-1gqu.onrender.com'
 
 
 class ResolveRequest(BaseModel):
@@ -162,6 +164,14 @@ def resolve(page_url):
 
 
 def install_resolver(app):
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[MIGRATED_WEB_ORIGIN],
+        allow_methods=['GET', 'HEAD', 'POST', 'OPTIONS'],
+        allow_headers=['*'],
+        expose_headers=['Content-Type', 'Content-Disposition'],
+    )
+
     @app.post('/resolve')
     def resolve_page(data: ResolveRequest):
         page_url = valid_source(data.url)
