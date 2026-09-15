@@ -10,6 +10,7 @@ on:
       - "native-download.js"
       - "file-job-client.js"
       - "sw.js"
+      - "test-browser-handoff.mjs"
       - "downloader-worker/**"
       - "api/**"
       - "package.json"
@@ -53,9 +54,12 @@ jobs:
           node --check file-job-client.js
           node --check native-download.js
           node --check sw.js
-          grep -q "FRONTEND_VERSION = 'single-path-v1'" app.js
+          node test-browser-handoff.mjs
+          grep -q "FRONTEND_VERSION = 'single-path-v2-browser-handoff'" app.js
           grep -q 'warmDownloaderWorker' gateway.js
           grep -q 'file-job-client.js' index.html
+          grep -q 'helperPanel' index.html
+          grep -q 'browser-handoff-v2' app.js
           if grep -q 'mux.js' index.html; then
             echo 'legacy mux.js must not be loaded'
             exit 1
@@ -79,7 +83,8 @@ jobs:
             ready=0
             for attempt in $(seq 1 60); do
               if curl -fsS --max-time 15 "$WEB_URL/app.js" -o /tmp/app.js && \
-                 grep -q "FRONTEND_VERSION = 'single-path-v1'" /tmp/app.js; then
+                 grep -q "FRONTEND_VERSION = 'single-path-v2-browser-handoff'" /tmp/app.js && \
+                 grep -q 'browser-handoff-v2' /tmp/app.js; then
                 ready=1
                 break
               fi
@@ -91,6 +96,7 @@ jobs:
 
           curl -fsS --max-time 15 "$WEB_URL/" -o /tmp/index.html
           grep -q '영상 저장 도구' /tmp/index.html
+          grep -q 'helperPanel' /tmp/index.html
           curl -fsS --max-time 15 "$WEB_URL/gateway.js" -o /tmp/gateway.js
           grep -q 'downloader-worker-brm7.onrender.com' /tmp/gateway.js
 
