@@ -2,6 +2,7 @@
 (() => {
   const BASE = 'https://downloader-worker-brm7.onrender.com';
   const KEY = 'downloader-complete-file-v1';
+  const MAX_RECOVERY_ATTEMPTS = 2;
   let active = null;
   let polling = false;
   let timer;
@@ -76,27 +77,35 @@
   }
 
   function show(job) {
+    const queued = job.status === 'queued';
     const ready = job.status === 'ready';
     const failed = job.status === 'failed';
     const fraction = job.totalSegments ? job.completedSegments / job.totalSegments : 0;
     const stats = timing(job);
     const details = [
       `${job.title} · ${job.quality}`,
+      queued && job.queuePosition ? `대기 ${job.queuePosition}번` : null,
       mb(job.bytes || 0),
       job.totalSegments ? `${job.completedSegments}/${job.totalSegments} 조각` : null,
-      !ready && stats.speed ? `평균 ${stats.speed}` : null,
-      !ready && stats.eta ? `약 ${stats.eta} 남음` : null,
+      !queued && !ready && stats.speed ? `평균 ${stats.speed}` : null,
+      !queued && !ready && stats.eta ? `약 ${stats.eta} 남음` : null,
       ready && stats.elapsed ? `준비 ${duration(stats.elapsed)}` : null,
     ].filter(Boolean);
     const summary = details.join(' · ');
 
     updateProgress(
-      ready ? 100 : Math.min(99, fraction * 100),
-      ready ? 'MP4 준비 완료' : failed ? '파일 준비 실패' : '서버에서 MP4 준비 중',
+      ready ? 100 : queued ? 0 : Math.min(99, fraction * 100),
+      ready ? 'MP4 준비 완료' : failed ? '파일 준비 실패' : queued ? '파일 준비 대기 중' : '서버에서 MP4 준비 중',
       summary,
     );
     document.querySelector('.progress').hidden = ready || failed;
-    document.getElementById('downloadPercent').textContent = ready ? '준비 완료' : failed ? '실패' : `${Math.floor(fraction * 100)}%`;
+    document.getElementById('downloadPercent').textContent = ready
+      ? '준비 완료'
+      : failed
+        ? '실패'
+        : queued
+          ? (job.queuePosition ? `대기 ${job.queuePosition}번` : '대기 중')
+          : `${Math.floor(fraction * 100)}%`;
 
     const link = saveLink();
     link.hidden = !ready;
@@ -108,7 +117,24 @@
     } else if (failed) {
       showError(job.message || '파일 준비에 실패했습니다.');
     }
-    document.querySelectorAll('.prepare-file').forEach(button => { button.disabled = !ready && !failed; });
+    document.querySelectorAll('.prepare-file').forEach(button => { button.disabled = queued || (!ready && !failed); });
+  }
+
+  function recoverMissingJob(error) {
+    if (error.status !== 410 || !active?.request || active.status === 'failed') return false;
+    const attempts = Number(active.recoveryAttempts || 0);
+    if (attempts >= MAX_RECOVERY_ATTEMPTS) return false;
+    saveLink().hidden = true;
+    persist({
+      ...active,
+      id: null,
+      status: 'queued',
+      snapshot: null,
+      recoveryAttempts: attempts + 1,
+    });
+    updateProgress(0, '작업 자동 복구 중', '서버가 재시작되어 같은 요청으로 파일 준비를 다시 연결합니다.');
+    timer = setTimeout(poll, 500);
+    return true;
   }
 
   async function poll() {
@@ -127,7 +153,7 @@
             body: JSON.stringify(active.request),
           });
       if (current !== generation) return;
-      if (!job.id || !['preparing', 'ready', 'failed'].includes(job.status)) {
+      if (!job.id || !['queued', 'preparing', 'ready', 'failed'].includes(job.status)) {
         throw new Error('서버가 아직 작업 상태를 보내지 않았습니다.');
       }
       persist({...active, id: job.id, status: job.status, snapshot: job});
@@ -136,10 +162,11 @@
       document.getElementById('result').classList.add('show');
       document.getElementById('error').classList.remove('show');
       show(job);
-      if (job.status === 'preparing') timer = setTimeout(poll, 2000);
+      if (job.status === 'queued' || job.status === 'preparing') timer = setTimeout(poll, 2000);
     } catch (error) {
       if (current !== generation) return;
       document.getElementById('result').classList.add('show');
+      if (recoverMissingJob(error)) return;
       if ([400, 404, 409, 410, 422, 507].includes(error.status)) {
         persist(null);
         saveLink().hidden = true;
@@ -175,8 +202,9 @@
     saveLink().hidden = true;
     document.getElementById('error').classList.remove('show');
     persist({
-      status: 'preparing',
+      status: 'queued',
       startedAt: Date.now(),
+      recoveryAttempts: 0,
       result: state.result,
       request: {
         stream_url: stream.url,
@@ -186,7 +214,7 @@
       },
     });
     document.querySelectorAll('.prepare-file').forEach(button => { button.disabled = true; });
-    updateProgress(0, '파일 준비 요청 중', '서버에서 완성된 MP4 파일을 준비합니다.');
+    updateProgress(0, '파일 준비 요청 중', '서버 대기열에 작업을 등록합니다.');
     await poll();
   }
 
@@ -234,7 +262,7 @@
     if (!active) return;
     failures = 0;
 
-    if (!active.startedAt && active.status === 'preparing') {
+    if (!active.startedAt && ['queued', 'preparing'].includes(active.status)) {
       active.startedAt = Date.now();
       persist(active);
     }
@@ -246,7 +274,7 @@
     document.getElementById('videoTitle').textContent = active.snapshot?.title || active.request?.title || '진행 중인 영상';
     if (active.snapshot) show(active.snapshot);
     else updateProgress(0, '기존 작업 확인 중', '저장된 작업을 다시 연결합니다. 영상을 다시 찾을 필요가 없습니다.');
-    document.querySelectorAll('.prepare-file').forEach(button => { button.disabled = active.status === 'preparing'; });
+    document.querySelectorAll('.prepare-file').forEach(button => { button.disabled = ['queued', 'preparing'].includes(active.status); });
     void poll();
   }
 
