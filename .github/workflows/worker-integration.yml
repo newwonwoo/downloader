@@ -2,7 +2,7 @@ name: Downloader worker integration
 
 on:
   push:
-    branches: [main, "migrate/**", "fix/**"]
+    branches: [main, "migrate/**", "fix/**", "perf/**", "feat/**"]
     paths:
       - "downloader-worker/**"
       - ".github/workflows/worker-integration.yml"
@@ -25,17 +25,15 @@ jobs:
         with:
           python-version: '3.13'
       - name: Install worker dependencies
-        run: python -m pip install -r downloader-worker/requirements.txt httpx
-      - name: Install matching ffmpeg binaries
+        run: time python -m pip install --only-binary=:all: -r downloader-worker/requirements.txt httpx
+      - name: Install bundled ffmpeg binary
         shell: bash
         run: |
           set -euo pipefail
           cd downloader-worker
           mkdir -p .bin
           ffmpeg_path="$(python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')"
-          ffprobe_path="$(python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffprobe_exe())')"
           ln -sf "$ffmpeg_path" .bin/ffmpeg
-          ln -sf "$ffprobe_path" .bin/ffprobe
           .bin/ffmpeg -version | head -n 2
       - name: Run worker tests
         run: PATH="$PWD/downloader-worker/.bin:$PATH" python -m unittest discover -s downloader-worker -p 'test_*.py' -v
