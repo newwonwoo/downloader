@@ -18,6 +18,27 @@
     } catch {}
   };
   const mb = bytes => `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+  const mbps = (bytes, seconds) => seconds > 0 ? `${(bytes / 1024 / 1024 / seconds).toFixed(1)}MB/s` : null;
+  const duration = seconds => {
+    if (!Number.isFinite(seconds) || seconds < 0) return null;
+    const rounded = Math.max(0, Math.round(seconds));
+    if (rounded < 60) return `${rounded}초`;
+    const minutes = Math.floor(rounded / 60);
+    const rest = rounded % 60;
+    return rest ? `${minutes}분 ${rest}초` : `${minutes}분`;
+  };
+
+  function timing(job) {
+    const startedAt = Number(active?.startedAt || 0);
+    if (!startedAt) return {elapsed: 0, speed: null, eta: null};
+    const elapsed = Math.max(0, (Date.now() - startedAt) / 1000);
+    const fraction = job.totalSegments ? job.completedSegments / job.totalSegments : 0;
+    const speed = job.bytes > 0 && elapsed >= 1 ? mbps(job.bytes, elapsed) : null;
+    const etaSeconds = fraction > 0.03 && fraction < 1 && elapsed >= 3
+      ? elapsed * (1 - fraction) / fraction
+      : null;
+    return {elapsed, speed, eta: etaSeconds == null ? null : duration(etaSeconds)};
+  }
 
   function saveLink() {
     let link = document.getElementById('fileSaveButton');
@@ -58,7 +79,16 @@
     const ready = job.status === 'ready';
     const failed = job.status === 'failed';
     const fraction = job.totalSegments ? job.completedSegments / job.totalSegments : 0;
-    const summary = `${job.title} · ${job.quality} · ${mb(job.bytes || 0)}${job.totalSegments ? ` · ${job.completedSegments}/${job.totalSegments} 조각` : ''}`;
+    const stats = timing(job);
+    const details = [
+      `${job.title} · ${job.quality}`,
+      mb(job.bytes || 0),
+      job.totalSegments ? `${job.completedSegments}/${job.totalSegments} 조각` : null,
+      !ready && stats.speed ? `평균 ${stats.speed}` : null,
+      !ready && stats.eta ? `약 ${stats.eta} 남음` : null,
+      ready && stats.elapsed ? `준비 ${duration(stats.elapsed)}` : null,
+    ].filter(Boolean);
+    const summary = details.join(' · ');
 
     updateProgress(
       ready ? 100 : Math.min(99, fraction * 100),
@@ -106,7 +136,7 @@
       document.getElementById('result').classList.add('show');
       document.getElementById('error').classList.remove('show');
       show(job);
-      if (job.status === 'preparing') timer = setTimeout(poll, 2500);
+      if (job.status === 'preparing') timer = setTimeout(poll, 2000);
     } catch (error) {
       if (current !== generation) return;
       document.getElementById('result').classList.add('show');
@@ -146,6 +176,7 @@
     document.getElementById('error').classList.remove('show');
     persist({
       status: 'preparing',
+      startedAt: Date.now(),
       result: state.result,
       request: {
         stream_url: stream.url,
@@ -203,6 +234,10 @@
     if (!active) return;
     failures = 0;
 
+    if (!active.startedAt && active.status === 'preparing') {
+      active.startedAt = Date.now();
+      persist(active);
+    }
     if (active.result) {
       state.result = active.result;
       window.renderResult(active.result, true);
