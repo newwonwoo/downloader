@@ -2,8 +2,9 @@ name: Render production smoke
 
 on:
   push:
-    branches: [main, "fix/**"]
+    branches: [main, "fix/**", "test/**"]
     paths:
+      - "gateway.js"
       - "native-download.js"
       - "file-job-client.js"
       - "downloader-worker/**"
@@ -16,32 +17,63 @@ permissions:
 jobs:
   production-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     env:
+      WEB_URL: https://downloader-web-1gqu.onrender.com
       WORKER_URL: https://downloader-worker-brm7.onrender.com
+      PAGE_URL: https://njavtv.com/dm890/ko/102816-005
       STREAM_URL: https://surrit.com/fee1f896-c34b-4caa-a712-0e8241e38cfc/640x360/video.m3u8
     steps:
-      - name: Verify health and file-job route
+      - name: Verify standalone web and worker wiring
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 30); do
-            if curl -fsS --max-time 10 "$WORKER_URL/health" > /tmp/health.json; then
-              break
-            fi
-            sleep 2
-          done
+          curl -fsS --max-time 15 "$WEB_URL/" -o /tmp/index.html
+          grep -q '영상 저장 도구' /tmp/index.html
+          curl -fsS --max-time 15 "$WEB_URL/gateway.js" -o /tmp/gateway.js
+          grep -q 'downloader-worker-brm7.onrender.com' /tmp/gateway.js
+
+          curl -fsS --max-time 15 -D /tmp/cors.txt -o /tmp/health.json \
+            -H "Origin: $WEB_URL" "$WORKER_URL/health"
           cat /tmp/health.json
+          grep -qi '^access-control-allow-origin: https://downloader-web-1gqu.onrender.com' /tmp/cors.txt
           python - <<'PY'
           import json
           data=json.load(open('/tmp/health.json'))
           assert data['ok'] is True
           assert data['mode'] == 'native-mobile-stream-v5-files'
           PY
-          status=$(curl -sS --max-time 10 -o /tmp/jobs.json -w '%{http_code}' \
-            -H 'content-type: application/json' -d '{}' "$WORKER_URL/jobs")
+
+          status=$(curl -sS --max-time 15 -o /tmp/jobs.json -w '%{http_code}' \
+            -H 'content-type: application/json' -H "Origin: $WEB_URL" -d '{}' "$WORKER_URL/jobs")
           cat /tmp/jobs.json
           test "$status" = "422"
+
+      - name: Verify page resolver after main rollout
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=000
+          for attempt in $(seq 1 60); do
+            status=$(curl -sS --max-time 15 -o /tmp/resolve.json -w '%{http_code}' \
+              -H 'content-type: application/json' -H "Origin: $WEB_URL" \
+              -d "{\"url\":\"$PAGE_URL\"}" "$WORKER_URL/resolve" || true)
+            cat /tmp/resolve.json || true
+            if [ "$status" = "200" ]; then
+              break
+            fi
+            echo "RESOLVER_WAIT attempt=$attempt status=$status"
+            sleep 2
+          done
+          test "$status" = "200"
+          python - <<'PY'
+          import json
+          data=json.load(open('/tmp/resolve.json'))
+          assert data['ok'] is True
+          assert data['streams']
+          assert any(x.get('quality') == '640x360' for x in data['streams'])
+          PY
 
       - name: Verify real MP4 output
         shell: bash

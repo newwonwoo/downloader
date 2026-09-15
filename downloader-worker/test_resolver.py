@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 import resolver
 
@@ -25,6 +26,18 @@ class ResolverTests(unittest.TestCase):
         found_id, urls = resolver.candidates(f'<source src="{direct}">', 'https://njavtv.com/x')
         self.assertEqual(found_id, video_id)
         self.assertEqual(urls[0], direct)
+
+    def test_verified_target_does_not_refetch_blocked_source_page(self):
+        page_url = 'https://njavtv.com/dm890/ko/102816-005'
+        with patch.object(resolver, 'fetch', side_effect=AssertionError('verified target must not refetch source')):
+            result = resolver.resolve(page_url)
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['resolver'], 'render-verified-target-v1')
+        self.assertEqual(result['videoId'], 'fee1f896-c34b-4caa-a712-0e8241e38cfc')
+        self.assertEqual(
+            [stream['quality'] for stream in result['streams']],
+            ['1280x720', '842x480', '640x360'],
+        )
 
 
 if __name__ == '__main__':
