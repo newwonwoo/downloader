@@ -9,6 +9,7 @@ on:
       - "gateway.js"
       - "file-job-client.js"
       - "sw.js"
+      - "test-browser-handoff.mjs"
       - ".github/workflows/frontend-integration.yml"
   pull_request:
     paths:
@@ -17,6 +18,7 @@ on:
       - "gateway.js"
       - "file-job-client.js"
       - "sw.js"
+      - "test-browser-handoff.mjs"
       - ".github/workflows/frontend-integration.yml"
 
 permissions:
@@ -36,6 +38,7 @@ jobs:
           node --check gateway.js
           node --check file-job-client.js
           node --check sw.js
+          node test-browser-handoff.mjs
           grep -Fq 'file-job-client.js' index.html
           grep -Fq 'startedAt: Date.now()' file-job-client.js
           grep -Fq 'MB/s' file-job-client.js
