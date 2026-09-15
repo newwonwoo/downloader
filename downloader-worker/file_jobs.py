@@ -22,7 +22,9 @@ class PrepareRequest(BaseModel):
 
 class FileJobs:
     TTL = 3600
-    MAX_JOBS = 3
+    MAX_JOBS = max(3, int(os.getenv('MAX_FILE_JOBS', '5')))
+    MAX_QUEUED_JOBS = max(0, int(os.getenv('MAX_QUEUED_FILE_JOBS', '2')))
+    MAX_CONCURRENT_JOBS = max(1, int(os.getenv('MAX_CONCURRENT_FILE_JOBS', '1')))
     MAX_BYTES = int(os.getenv('MAX_FILE_BYTES', str(16 * 1024**3)))
     FREE_RESERVE = 256 * 1024**2
     DISK_CHECK_INTERVAL_BYTES = int(os.getenv('DISK_CHECK_INTERVAL_BYTES', str(32 * 1024**2)))
@@ -34,13 +36,21 @@ class FileJobs:
         self.root.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
         self.jobs = {}
-        self.preparing = False
+        self.queue = []
+        self.active_jobs = set()
+        self.dispatch_event = threading.Event()
+        threading.Thread(target=self.dispatch_loop, daemon=True).start()
+
+    @property
+    def preparing(self):
+        with self.lock:
+            return bool(self.active_jobs or self.queue)
 
     def expire(self):
         with self.lock:
             now = time.time()
             for job_id, job in list(self.jobs.items()):
-                if job['status'] == 'preparing' or job['readers']:
+                if job['status'] in ('queued', 'preparing') or job['readers']:
                     continue
                 if now - job['touched'] < self.TTL:
                     continue
@@ -48,12 +58,37 @@ class FileJobs:
                     (self.root / (job_id + suffix)).unlink(missing_ok=True)
                 del self.jobs[job_id]
 
+    def queue_position(self, job_id):
+        try:
+            return self.queue.index(job_id) + 1
+        except ValueError:
+            return None
+
     def snapshot(self, job):
+        position = self.queue_position(job['id']) if job['status'] == 'queued' else None
         return {key: job[key] for key in (
             'id', 'status', 'title', 'quality', 'bytes', 'completedSegments',
             'totalSegments', 'message', 'sha256'
-        )} | {'file_url': f"/files/{job['id']}.mp4" if job['status'] == 'ready' else None,
-             'expiresInSeconds': self.TTL}
+        )} | {
+            'queuePosition': position,
+            'file_url': f"/files/{job['id']}.mp4" if job['status'] == 'ready' else None,
+            'expiresInSeconds': self.TTL,
+        }
+
+    def make_room(self):
+        if len(self.jobs) < self.MAX_JOBS:
+            return
+        removable = sorted(
+            (job for job in self.jobs.values()
+             if job['status'] in ('ready', 'failed') and not job['readers']),
+            key=lambda job: job['touched'],
+        )
+        for job in removable:
+            for suffix in ('.part', '.mp4'):
+                (self.root / (job['id'] + suffix)).unlink(missing_ok=True)
+            del self.jobs[job['id']]
+            if len(self.jobs) < self.MAX_JOBS:
+                return
 
     def create(self, data):
         if not self.allowed(data.stream_url):
@@ -66,35 +101,75 @@ class FileJobs:
                         raise HTTPException(409, '요청 키가 다른 영상에 사용됐습니다.')
                     job['touched'] = time.time()
                     return self.snapshot(job)
-            for old_id, old in list(self.jobs.items()):
-                if old['status'] == 'failed':
-                    del self.jobs[old_id]
-            if self.preparing or len(self.jobs) >= self.MAX_JOBS:
-                raise HTTPException(503, '서버가 다른 파일을 준비 중이거나 임시 보관함이 가득 찼습니다. 잠시 후 다시 시도하세요.',
+
+            self.make_room()
+            if len(self.jobs) >= self.MAX_JOBS:
+                raise HTTPException(503, '임시 보관함이 가득 찼습니다. 완료된 파일을 저장한 뒤 다시 시도하세요.',
                                     headers={'Retry-After': '10'})
+            if len(self.queue) >= self.MAX_QUEUED_JOBS and len(self.active_jobs) >= self.MAX_CONCURRENT_JOBS:
+                raise HTTPException(503, '파일 준비 대기열이 가득 찼습니다. 잠시 후 다시 시도하세요.',
+                                    headers={'Retry-After': '10'})
+
             free_bytes = shutil.disk_usage(self.root).free
             if free_bytes < self.FREE_RESERVE * 2:
                 raise HTTPException(507, '파일 준비에 필요한 임시 공간이 부족합니다.')
-            if not self.slots.acquire(blocking=False):
-                raise HTTPException(503, '기존 다운로드 작업이 정리 중입니다. 잠시 후 다시 시도하세요.',
-                                    headers={'Retry-After': '10'})
+
             job_id = secrets.token_urlsafe(24)
-            job = dict(id=job_id, request_key=data.request_key, stream_url=data.stream_url,
-                       title=self.safe_name(data.title), quality=self.safe_name(data.quality),
-                       status='preparing', bytes=0, completedSegments=0, totalSegments=0,
-                       message='영상 목록 확인 중', sha256=None, readers=0, touched=time.time(),
-                       limit=min(self.MAX_BYTES, free_bytes - self.FREE_RESERVE))
+            job = dict(
+                id=job_id,
+                request_key=data.request_key,
+                stream_url=data.stream_url,
+                title=self.safe_name(data.title),
+                quality=self.safe_name(data.quality),
+                status='queued',
+                bytes=0,
+                completedSegments=0,
+                totalSegments=0,
+                message='파일 준비 대기 중',
+                sha256=None,
+                readers=0,
+                touched=time.time(),
+                limit=min(self.MAX_BYTES, free_bytes - self.FREE_RESERVE),
+            )
             self.jobs[job_id] = job
-            self.preparing = True
+            self.queue.append(job_id)
+            snapshot = self.snapshot(job)
+        self.dispatch_event.set()
+        return snapshot
+
+    def dispatch_loop(self):
+        while True:
+            self.dispatch_event.wait(0.5)
+            self.dispatch_event.clear()
+            self.dispatch_ready()
+
+    def dispatch_ready(self):
+        while True:
+            with self.lock:
+                if not self.queue or len(self.active_jobs) >= self.MAX_CONCURRENT_JOBS:
+                    return
+                job_id = self.queue[0]
+            if not self.slots.acquire(blocking=False):
+                return
+            with self.lock:
+                if not self.queue or self.queue[0] != job_id:
+                    self.slots.release()
+                    continue
+                self.queue.pop(0)
+                job = self.jobs.get(job_id)
+                if job is None:
+                    self.slots.release()
+                    continue
+                job.update(status='preparing', message='영상 목록 확인 중', touched=time.time())
+                self.active_jobs.add(job_id)
             try:
-                thread = threading.Thread(target=self.build, args=(job_id,), daemon=True)
-                thread.start()
-            except Exception:
-                self.preparing = False
-                del self.jobs[job_id]
+                threading.Thread(target=self.build, args=(job_id,), daemon=True).start()
+            except Exception as exc:
+                with self.lock:
+                    self.active_jobs.discard(job_id)
+                    job.update(status='failed', message=str(exc)[:300], touched=time.time())
                 self.slots.release()
-                raise
-            return self.snapshot(job)
+                continue
 
     def build(self, job_id):
         part = self.root / (job_id + '.part')
@@ -151,8 +226,9 @@ class FileJobs:
                     body.close()
             finally:
                 with self.lock:
-                    self.preparing = False
-                    self.slots.release()
+                    self.active_jobs.discard(job_id)
+                self.slots.release()
+                self.dispatch_event.set()
 
     def status(self, job_id):
         self.expire()
