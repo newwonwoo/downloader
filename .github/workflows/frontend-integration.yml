@@ -43,6 +43,10 @@ jobs:
           grep -Fq 'startedAt: Date.now()' file-job-client.js
           grep -Fq 'MB/s' file-job-client.js
           grep -Fq '남음' file-job-client.js
+          grep -Fq 'MAX_RECOVERY_ATTEMPTS = 2' file-job-client.js
+          grep -Fq 'recoverMissingJob' file-job-client.js
+          grep -Fq "['queued', 'preparing', 'ready', 'failed']" file-job-client.js
+          grep -Fq 'queuePosition' file-job-client.js
           grep -Fq 'helperPanel' index.html
           grep -Fq 'browser-handoff-v2' app.js
           grep -Fq 'window.hls' app.js
