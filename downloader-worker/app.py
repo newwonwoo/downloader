@@ -18,6 +18,8 @@ from starlette.concurrency import run_in_threadpool
 
 ALLOWED = ('surrit.com', 'nineyu.com')
 DOWNLOAD_WORKERS = max(1, int(os.getenv('DOWNLOAD_WORKERS', '8')))
+HLS_PREFETCH_FACTOR = max(1, int(os.getenv('HLS_PREFETCH_FACTOR', '3')))
+HLS_PREFETCH_MAX_SEGMENTS = max(1, int(os.getenv('HLS_PREFETCH_MAX_SEGMENTS', '24')))
 UPSTREAM_TIMEOUT = int(os.getenv('UPSTREAM_TIMEOUT', '15'))
 MAX_OBJECT_BYTES = int(os.getenv('MAX_OBJECT_BYTES', str(16 * 1024 * 1024)))
 FIRST_OUTPUT_TIMEOUT = int(os.getenv('FIRST_OUTPUT_TIMEOUT', '20'))
@@ -292,6 +294,17 @@ def adaptive_worker_count(segment_count, first_fetch_seconds, max_workers=None):
     return max(1, min(target, ceiling))
 
 
+def prefetch_window_count(segment_count, workers, factor=None, max_segments=None):
+    """Bound how far ahead futures may run while preserving segment order."""
+    remaining = max(0, int(segment_count) - 1)
+    if remaining <= 0:
+        return 0
+    worker_count = max(1, int(workers))
+    factor = HLS_PREFETCH_FACTOR if factor is None else max(1, int(factor))
+    max_segments = HLS_PREFETCH_MAX_SEGMENTS if max_segments is None else max(1, int(max_segments))
+    return min(remaining, max_segments, worker_count * factor)
+
+
 def detect_input_format(init_bytes, first_bytes):
     head = (init_bytes[:128] if init_bytes else b'') + first_bytes[:4096]
     if b'ftyp' in head[:128] or b'moov' in head[:4096] or b'moof' in head[:4096]:
@@ -386,11 +399,13 @@ def prepare_mp4_stream(stream_url, on_progress=None):
         first['seq'],
     )
     selected_workers = adaptive_worker_count(len(segments), first_fetch_seconds)
+    prefetch_window = prefetch_window_count(len(segments), selected_workers)
 
     input_format = detect_input_format(init_bytes, first_bytes)
     print(
         f'NATIVE_INPUT format={input_format or "auto"} init={len(init_bytes)} first={len(first_bytes)} '
-        f'workers={selected_workers}/{DOWNLOAD_WORKERS} firstFetchMs={round(first_fetch_seconds * 1000)} '
+        f'workers={selected_workers}/{DOWNLOAD_WORKERS} prefetch={prefetch_window} '
+        f'firstFetchMs={round(first_fetch_seconds * 1000)} '
         f'head={(init_bytes or first_bytes)[:16].hex()}',
         flush=True,
     )
@@ -487,8 +502,9 @@ def prepare_mp4_stream(stream_url, on_progress=None):
             pool = ThreadPoolExecutor(max_workers=workers)
             futures = {}
             next_submit = start
+            initial_window = max(workers, prefetch_window)
 
-            while next_submit < min(len(segments), start + workers):
+            while next_submit < min(len(segments), start + initial_window):
                 segment = segments[next_submit]
                 futures[next_submit] = pool.submit(
                     fetch_bytes,
@@ -594,6 +610,8 @@ def health():
         'mode': 'native-mobile-stream-v5-files',
         'downloadWorkers': DOWNLOAD_WORKERS,
         'adaptiveDownloadWorkers': True,
+        'hlsPrefetchFactor': HLS_PREFETCH_FACTOR,
+        'hlsPrefetchMaxSegments': HLS_PREFETCH_MAX_SEGMENTS,
         'maxActiveDownloads': MAX_ACTIVE_DOWNLOADS,
         'fileStorageFreeBytes': __import__('shutil').disk_usage(file_jobs.root).free,
         'fileStorageReserveBytes': file_jobs.FREE_RESERVE,
