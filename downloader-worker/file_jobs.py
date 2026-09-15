@@ -180,6 +180,23 @@ def install_file_jobs(app, allowed, prepare, slots, safe_name):
     from resolver import install_resolver
     install_resolver(app)
     store = FileJobs(allowed, prepare, slots, safe_name)
+    deployed_commit = os.getenv('RENDER_GIT_COMMIT', '')
+
+    @app.middleware('http')
+    async def deployment_identity(request, call_next):
+        response = await call_next(request)
+        if deployed_commit:
+            response.headers['X-Worker-Git-Commit'] = deployed_commit
+        return response
+
+    @app.api_route('/', methods=['GET', 'HEAD'])
+    def root_health():
+        return {
+            'ok': True,
+            'mode': 'native-mobile-stream-v5-files',
+            'gitCommit': deployed_commit or None,
+        }
+
     @app.post('/jobs', status_code=202)
     def create_file_job(data: PrepareRequest):
         return store.create(data)
