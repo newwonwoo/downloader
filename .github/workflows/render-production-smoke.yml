@@ -2,7 +2,7 @@ name: Render production smoke
 
 on:
   push:
-    branches: [main, "fix/**", "test/**"]
+    branches: [main, "fix/**", "test/**", "chore/**"]
     paths:
       - "index.html"
       - "app.js"
@@ -11,6 +11,11 @@ on:
       - "file-job-client.js"
       - "sw.js"
       - "downloader-worker/**"
+      - "api/**"
+      - "package.json"
+      - "requirements.txt"
+      - "vercel.json"
+      - "README.md"
       - ".github/workflows/render-production-smoke.yml"
   workflow_dispatch:
 
@@ -28,6 +33,16 @@ jobs:
       STREAM_URL: https://surrit.com/fee1f896-c34b-4caa-a712-0e8241e38cfc/640x360/video.m3u8
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify standalone repository shape
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -d api
+          test ! -e package.json
+          test ! -e requirements.txt
+          test ! -e vercel.json
+          grep -q 'There is no Vercel runtime' README.md
 
       - name: Verify single-path frontend locally
         shell: bash
