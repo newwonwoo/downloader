@@ -1,6 +1,6 @@
 // Prepare a complete file, then let the native manager GET a sized attachment.
 (() => {
-  const BASE = 'https://unisquads-downloader-worker.onrender.com';
+  const BASE = 'https://downloader-worker-brm7.onrender.com';
   const KEY = 'downloader-complete-file-v1';
   let active = null;
   let polling = false;
