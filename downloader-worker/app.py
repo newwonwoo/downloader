@@ -28,7 +28,10 @@ RANGE_RE = re.compile(r'^bytes=(\d+)-(\d+)$', re.I)
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=['https://unisquads.vercel.app'],
+    allow_origins=[
+        'https://downloader-web-1gqu.onrender.com',
+        'https://unisquads.vercel.app',
+    ],
     allow_methods=['GET', 'HEAD', 'POST', 'OPTIONS'],
     allow_headers=['*'],
     expose_headers=['Content-Type', 'Content-Disposition'],
