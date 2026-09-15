@@ -45,6 +45,19 @@ jobs:
           test ! -e vercel.json
           grep -q 'There is no Vercel runtime' README.md
 
+      - name: Verify performance and recovery contracts locally
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq "DOWNLOAD_WORKERS = max(1, int(os.getenv('DOWNLOAD_WORKERS', '8')))" downloader-worker/app.py
+          grep -Fq 'def adaptive_worker_count' downloader-worker/app.py
+          grep -Fq "MAX_CONCURRENT_JOBS = max(1, int(os.getenv('MAX_CONCURRENT_FILE_JOBS', '1')))" downloader-worker/file_jobs.py
+          grep -Fq "MAX_QUEUED_JOBS = max(0, int(os.getenv('MAX_QUEUED_FILE_JOBS', '2')))" downloader-worker/file_jobs.py
+          grep -Fq 'queuePosition' downloader-worker/file_jobs.py
+          grep -Fq 'MAX_RECOVERY_ATTEMPTS = 2' file-job-client.js
+          grep -Fq 'recoverMissingJob' file-job-client.js
+          grep -Fq "['queued', 'preparing', 'ready', 'failed']" file-job-client.js
+
       - name: Verify single-path frontend locally
         shell: bash
         run: |
@@ -81,10 +94,13 @@ jobs:
 
           if [ "$GITHUB_REF" = 'refs/heads/main' ]; then
             ready=0
-            for attempt in $(seq 1 60); do
+            for attempt in $(seq 1 90); do
               if curl -fsS --max-time 15 "$WEB_URL/app.js" -o /tmp/app.js && \
+                 curl -fsS --max-time 15 "$WEB_URL/file-job-client.js" -o /tmp/file-job-client.js && \
                  grep -q "FRONTEND_VERSION = 'single-path-v2-browser-handoff'" /tmp/app.js && \
-                 grep -q 'browser-handoff-v2' /tmp/app.js; then
+                 grep -q 'browser-handoff-v2' /tmp/app.js && \
+                 grep -q 'MAX_RECOVERY_ATTEMPTS = 2' /tmp/file-job-client.js && \
+                 grep -q 'queuePosition' /tmp/file-job-client.js; then
                 ready=1
                 break
               fi
@@ -125,6 +141,8 @@ jobs:
           data=json.load(open('/tmp/health.json'))
           assert data['ok'] is True
           assert data['mode'] == 'native-mobile-stream-v5-files'
+          assert data['adaptiveDownloadWorkers'] is True
+          assert data['downloadWorkers'] == 8
           PY
 
           if [ "$GITHUB_REF" = 'refs/heads/main' ]; then
