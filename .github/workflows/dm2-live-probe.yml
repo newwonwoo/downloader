@@ -1,0 +1,37 @@
+name: DM2 live resolver probe
+on:
+  push:
+    branches: ["test/dm2-live-probe"]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Probe production resolver against reported DM2 page
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://njavtv.com/dm2/ko/ktkp-001-uncensored-leak'
+          status=$(curl -sS --max-time 45 -o /tmp/body.json -w '%{http_code}' \
+            -H 'content-type: application/json' \
+            -H 'Origin: https://downloader-web-1gqu.onrender.com' \
+            -d "{\"url\":\"$url\"}" \
+            'https://downloader-worker-brm7.onrender.com/resolve' || true)
+          echo "STATUS=$status"
+          cat /tmp/body.json || true
+          echo
+          if [ "$status" -ge 500 ] 2>/dev/null; then
+            echo 'Resolver must not expose a 5xx transport failure for this page'
+            exit 1
+          fi
+          if [ "$status" = '200' ]; then
+            python - <<'PY'
+          import json
+          d=json.load(open('/tmp/body.json'))
+          assert d.get('ok') is True
+          assert d.get('streams')
+          print('DM2_RESOLVED', d.get('resolver'), len(d.get('streams', [])))
+          PY
+          fi
