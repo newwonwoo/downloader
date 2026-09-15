@@ -1,0 +1,18 @@
+{
+  "name": "영상 저장 도구",
+  "short_name": "영상 저장",
+  "description": "공유한 영상 페이지를 분석해 저장 가능한 MP4를 준비합니다.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#080b10",
+  "theme_color": "#080b10",
+  "icons": [
+    {"src":"/app-icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}
+  ],
+  "share_target": {
+    "action": "/?shared=1",
+    "method": "GET",
+    "params": {"title":"title","text":"text","url":"url"}
+  }
+}

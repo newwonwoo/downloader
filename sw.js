@@ -1,5 +1,7 @@
-// Retire the legacy Background Fetch service worker.
-self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', (event) => {
-  event.waitUntil(self.registration.unregister());
-});
+const CACHE='downloader-shell-v2';
+const SHELL=['./','./index.html','./styles.css','./gateway.js','./app.js','./file-job-client.js'];
+const MANIFEST={name:'영상 저장 도구',short_name:'영상 저장',start_url:'/',scope:'/',display:'standalone',background_color:'#080b10',theme_color:'#080b10',icons:[{src:'/app-icon.svg',sizes:'any',type:'image/svg+xml',purpose:'any maskable'}],share_target:{action:'/?shared=1',method:'GET',params:{title:'title',text:'text',url:'url'}}};
+const ICON='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#080b10"/><circle cx="256" cy="256" r="170" fill="#151c26"/><path d="M256 118v190m-78-72 78 78 78-78M166 372h180" fill="none" stroke="#f3f6fa" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)));self.skipWaiting();});
+self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));self.clients.claim();});
+self.addEventListener('fetch',event=>{if(event.request.method!=='GET')return;const url=new URL(event.request.url);if(url.origin===location.origin&&url.pathname==='/manifest.webmanifest'){event.respondWith(Promise.resolve(new Response(JSON.stringify(MANIFEST),{headers:{'Content-Type':'application/manifest+json','Cache-Control':'no-cache'}})));return}if(url.origin===location.origin&&url.pathname==='/app-icon.svg'){event.respondWith(Promise.resolve(new Response(ICON,{headers:{'Content-Type':'image/svg+xml','Cache-Control':'public, max-age=86400'}})));return}event.respondWith(fetch(event.request).catch(()=>caches.match(event.request).then(r=>r||caches.match('./index.html'))));});
