@@ -2,6 +2,8 @@
 
 Standalone video downloader migrated from `newwonwoo/unisquads`.
 
+**Deployment target: Render only.**
+
 ## Production architecture
 
 - `/` — static downloader UI served by Render (`downloader-web`)
