@@ -1,0 +1,79 @@
+name: Android capture APK
+
+on:
+  push:
+    branches: [main, "feat/android-capture-v1", "ci/android-capture-apk"]
+    paths:
+      - "android-capture/**"
+      - "settings.gradle.kts"
+      - "build.gradle.kts"
+      - "app.js"
+      - "test-capture-handoff.mjs"
+      - ".github/workflows/android-capture.yml"
+  pull_request:
+    paths:
+      - "android-capture/**"
+      - "settings.gradle.kts"
+      - "build.gradle.kts"
+      - "app.js"
+      - "test-capture-handoff.mjs"
+      - ".github/workflows/android-capture.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 35
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Verify capture contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node test-capture-handoff.mjs
+          grep -Fq 'android.intent.action.SEND' android-capture/src/main/AndroidManifest.xml
+          grep -Fq 'android:mimeType="text/plain"' android-capture/src/main/AndroidManifest.xml
+          grep -Fq 'shouldInterceptRequest' android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
+          grep -Fq 'ServiceWorkerController' android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
+          grep -Fq '@JavascriptInterface' android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
+          grep -Fq 'setAllowFileAccess(false)' android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
+          grep -Fq 'appendQueryParameter("capture", "1")' android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
+          grep -Fq 'appendQueryParameter("stream", stream)' android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
+
+      - name: Build debug APK
+        run: gradle :android-capture:assembleDebug --stacktrace
+
+      - name: Verify APK output
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s android-capture/build/outputs/apk/debug/android-capture-debug.apk
+          ls -lh android-capture/build/outputs/apk/debug/android-capture-debug.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: video-save-tool-debug-apk
+          path: android-capture/build/outputs/apk/debug/android-capture-debug.apk
+          if-no-files-found: error
+          retention-days: 14
