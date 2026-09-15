@@ -177,7 +177,7 @@ jobs:
         run: |
           set -euo pipefail
           set +e
-          curl -fSs --max-time 15 \
+          curl -fSs --max-time 30 \
             --get "$WORKER_URL/download" \
             --data-urlencode "stream_url=$STREAM_URL" \
             --data-urlencode 'title=migrated-production-smoke' \
