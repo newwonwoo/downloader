@@ -30,9 +30,12 @@ function validMedia(raw) {
 }
 async function getBrowser() {
   if (!browserPromise) {
+    const executablePath = await sparticuz.executablePath();
+    const args = Array.isArray(sparticuz.args) ? sparticuz.args : [];
+    console.log(`CHROMIUM path=${executablePath} args=${args.length}`);
     browserPromise = chromium.launch({
-      args: [...sparticuz.args, '--autoplay-policy=no-user-gesture-required'],
-      executablePath: await sparticuz.executablePath(),
+      args: [...args, '--autoplay-policy=no-user-gesture-required'],
+      executablePath,
       headless: true,
     }).catch(err => { browserPromise = null; throw err; });
   }
@@ -102,7 +105,13 @@ const server = http.createServer(async (req, res) => {
       return json(res, result.ok ? 200 : 409, result);
     } catch (error) {
       browserPromise = null;
-      return json(res, 502, { ok: false, code: 'BROWSER_FAILED', message: String(error && error.name || 'Error') });
+      console.error('BROWSER_FAILED', error && (error.stack || error.message || String(error)));
+      return json(res, 502, {
+        ok: false,
+        code: 'BROWSER_FAILED',
+        errorType: String(error && error.name || 'Error'),
+        message: String(error && error.message || error || 'Error').slice(0, 500),
+      });
     }
   });
 });
