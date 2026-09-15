@@ -1,0 +1,42 @@
+name: Browser resolver region probe
+on:
+  push:
+    branches: ["test/browser-regions"]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    strategy:
+      fail-fast: false
+      matrix:
+        endpoint:
+          - https://downloader-browser-resolver.onrender.com
+          - https://downloader-browser-resolver-us.onrender.com
+          - https://downloader-browser-resolver-eu.onrender.com
+    steps:
+      - name: Probe exact reported page
+        shell: bash
+        run: |
+          set -euo pipefail
+          endpoint='${{ matrix.endpoint }}'
+          url='https://njavtv.com/dm2/ko/ktkp-001-uncensored-leak'
+          for n in $(seq 1 40); do
+            if curl -fsS --max-time 5 "$endpoint/health" >/dev/null; then break; fi
+            sleep 3
+          done
+          status=$(curl -sS --max-time 90 -o /tmp/body.json -w '%{http_code}' \
+            -H 'content-type: application/json' \
+            -d "{\"url\":\"$url\"}" "$endpoint/resolve" || true)
+          echo "ENDPOINT=$endpoint STATUS=$status"
+          cat /tmp/body.json || true
+          echo
+          if [ "$status" = 200 ]; then
+            python - <<'PY'
+          import json
+          d=json.load(open('/tmp/body.json'))
+          assert d.get('ok') is True and d.get('streams')
+          print('REGION_SUCCESS', len(d['streams']))
+          PY
+          fi
