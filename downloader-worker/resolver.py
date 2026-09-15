@@ -53,9 +53,8 @@ def valid_media(value):
 
 def verified_target(page_url):
     parsed = urlparse(page_url)
-    host = (parsed.hostname or '').lower().removeprefix('www.')
-    path = parsed.path.rstrip('/') or '/'
-    target = VERIFIED_TARGETS.get(f'{host}{path}')
+    key = f"{(parsed.hostname or '').lower().removeprefix('www.')}{parsed.path.rstrip('/') or '/'}"
+    target = VERIFIED_TARGETS.get(key)
     if not target:
         return None
     video_id = target['videoId']
@@ -116,13 +115,11 @@ def blocked_response(response):
 def alternate_source_url(url):
     parsed = urlparse(url)
     host = (parsed.hostname or '').lower()
-    if host == 'njavtv.com':
-        host = 'www.njavtv.com'
-    elif host == 'www.njavtv.com':
-        host = 'njavtv.com'
-    else:
+    # The live service has no DNS record for www.njavtv.com. Only normalize
+    # incoming www links to the canonical host; never introduce www ourselves.
+    if host != 'www.njavtv.com':
         return None
-    netloc = host if parsed.port is None else f'{host}:{parsed.port}'
+    netloc = 'njavtv.com' if parsed.port is None else f'njavtv.com:{parsed.port}'
     return urlunparse(parsed._replace(netloc=netloc))
 
 
@@ -130,6 +127,8 @@ def _session_fetch(url, timeout, manifest, impersonate):
     session = requests.Session()
     parsed = urlparse(url)
     origin = f'{parsed.scheme}://{parsed.netloc}/'
+    last_response = None
+    last_error = None
     try:
         if parsed.hostname in SOURCE_HOSTS and not manifest:
             try:
@@ -142,7 +141,6 @@ def _session_fetch(url, timeout, manifest, impersonate):
                 )
             except Exception:
                 pass
-        last = None
         for profile in (1, 2, 3):
             try:
                 response = session.get(
@@ -153,15 +151,15 @@ def _session_fetch(url, timeout, manifest, impersonate):
                     allow_redirects=True,
                 )
             except Exception as error:
-                last = error
+                last_error = error
                 continue
-            last = response
+            last_response = response
             if manifest:
                 if response.status_code not in (401, 403, 429, 503):
                     return response
             elif not blocked_response(response):
                 return response
-        return last
+        return last_response or last_error
     finally:
         try:
             session.close()
@@ -170,28 +168,36 @@ def _session_fetch(url, timeout, manifest, impersonate):
 
 
 def fetch(url, timeout=10, manifest=False):
-    last = None
     targets = [url]
     alternate = alternate_source_url(url) if not manifest else None
     if alternate and alternate not in targets:
         targets.append(alternate)
 
+    last_response = None
+    last_error = None
     for target in targets:
         for impersonate in ('chrome', 'safari'):
-            result = _session_fetch(target, timeout, manifest, impersonate)
+            try:
+                result = _session_fetch(target, timeout, manifest, impersonate)
+            except Exception as error:
+                last_error = error
+                continue
             if result is None:
                 continue
-            last = result
-            if manifest:
-                if hasattr(result, 'status_code') and result.status_code not in (401, 403, 429, 503):
+            if hasattr(result, 'status_code'):
+                last_response = result
+                if manifest:
+                    if result.status_code not in (401, 403, 429, 503):
+                        return result
+                elif not blocked_response(result):
                     return result
-            elif hasattr(result, 'status_code') and not blocked_response(result):
-                return result
+            elif isinstance(result, Exception):
+                last_error = result
 
-    if hasattr(last, 'status_code'):
-        return last
-    if isinstance(last, Exception):
-        raise last
+    if last_response is not None:
+        return last_response
+    if last_error is not None:
+        raise last_error
     raise RuntimeError('request failed')
 
 
@@ -246,9 +252,13 @@ def probe(url):
         text = response.text if response.status_code == 200 else ''
         ok = response.status_code == 200 and '#EXTM3U' in text
         quality = next((q for q in QUALITY_ORDER if q.lower() in url.lower()), 'auto')
-        return dict(quality=quality, url=response.url if ok else url, available=ok,
-                    status=response.status_code,
-                    manifestType='master' if '#EXT-X-STREAM-INF' in text else ('media' if '#EXTINF' in text else 'unknown'))
+        return dict(
+            quality=quality,
+            url=response.url if ok else url,
+            available=ok,
+            status=response.status_code,
+            manifestType='master' if '#EXT-X-STREAM-INF' in text else ('media' if '#EXTINF' in text else 'unknown'),
+        )
     except Exception:
         return dict(quality='auto', url=url, available=False, status=0, manifestType='unknown')
 
@@ -258,7 +268,11 @@ def resolve(page_url):
     if verified:
         return verified
 
-    response = fetch(page_url, timeout=15)
+    try:
+        response = fetch(page_url, timeout=15)
+    except Exception as error:
+        raise HTTPException(502, detail={'code': 'SOURCE_UNREACHABLE', 'message': type(error).__name__}) from None
+
     html = normalized_html(response.text)
     if response.status_code != 200 or BLOCK_RE.search(html):
         raise HTTPException(409, detail={'code': 'SOURCE_BLOCKED', 'status': response.status_code})
@@ -266,18 +280,23 @@ def resolve(page_url):
     video_id, urls = candidates(html, page_url)
     if not urls:
         raise HTTPException(422, detail={'code': 'STREAM_NOT_FOUND', 'videoId': video_id})
+
     with ThreadPoolExecutor(max_workers=min(6, len(urls))) as pool:
         checked = list(pool.map(probe, urls))
     streams = [item for item in checked if item['available']]
     if not streams:
-        raise HTTPException(422, detail={'code': 'STREAM_UNAVAILABLE', 'videoId': video_id,
-                                         'candidateCount': len(urls),
-                                         'statuses': [item['status'] for item in checked]})
+        raise HTTPException(422, detail={
+            'code': 'STREAM_UNAVAILABLE',
+            'videoId': video_id,
+            'candidateCount': len(urls),
+            'statuses': [item['status'] for item in checked],
+        })
+
     order = {quality: index for index, quality in enumerate(QUALITY_ORDER)}
     streams.sort(key=lambda item: order.get(item['quality'], 999))
     return {
         'ok': True,
-        'resolver': 'render-curl-session-v2',
+        'resolver': 'render-curl-session-v3',
         'title': title_from(html),
         'videoId': video_id,
         'pageUrl': page_url,
@@ -303,4 +322,4 @@ def install_resolver(app):
 
     @app.get('/resolve/health')
     def resolve_health():
-        return {'ok': True, 'resolver': 'render-curl-session-v2', 'verifiedTargets': len(VERIFIED_TARGETS)}
+        return {'ok': True, 'resolver': 'render-curl-session-v3', 'verifiedTargets': len(VERIFIED_TARGETS)}
