@@ -106,7 +106,8 @@ class FileJobs:
             if len(self.jobs) >= self.MAX_JOBS:
                 raise HTTPException(503, '임시 보관함이 가득 찼습니다. 완료된 파일을 저장한 뒤 다시 시도하세요.',
                                     headers={'Retry-After': '10'})
-            if len(self.queue) >= self.MAX_QUEUED_JOBS and len(self.active_jobs) >= self.MAX_CONCURRENT_JOBS:
+            pending_jobs = len(self.queue) + len(self.active_jobs)
+            if pending_jobs >= self.MAX_CONCURRENT_JOBS + self.MAX_QUEUED_JOBS:
                 raise HTTPException(503, '파일 준비 대기열이 가득 찼습니다. 잠시 후 다시 시도하세요.',
                                     headers={'Retry-After': '10'})
 
