@@ -30,7 +30,7 @@
 
     <section>
       <h1>링크 하나로<br />영상을 저장합니다.</h1>
-      <p class="lead">영상 주소를 분석하고 MP4 준비를 누르세요. 파일이 완성되면 휴대폰에 저장 버튼으로 다운로드합니다. 준비 중에는 이 페이지를 열어 두세요.</p>
+      <p class="lead">영상 주소를 분석하고 MP4 준비를 누르세요. 파일 준비는 서버에서 계속 진행되며, 페이지를 다시 열면 진행 상태를 이어서 확인할 수 있습니다.</p>
 
       <div class="workspace">
         <form id="analyzeForm" class="urlbox">
@@ -62,14 +62,13 @@
             <div class="downloadtop"><strong id="downloadTitle">저장 준비</strong><span id="downloadPercent">0%</span></div>
             <div class="progress"><div id="progressBar" class="bar"></div></div>
             <div id="downloadMessage" class="downloadmsg">목록을 확인하고 있습니다.</div>
-            <button id="cancelButton" class="cancel" type="button">저장 취소</button>
           </div>
         </div>
       </div>
 
       <div class="facts">
         <div class="fact"><strong>완성 후 휴대폰에 저장</strong><span>준비가 끝나면 용량이 확정된 MP4 파일을 다운로드 관리자로 전달합니다.</span></div>
-        <div class="fact"><strong>끊긴 위치부터 이어받기 지원</strong><span>임시 파일이 남아 있는 동안 같은 저장 주소로 이어받을 수 있습니다. 실제 재시도 동작은 브라우저에 따라 다릅니다.</span></div>
+        <div class="fact"><strong>진행 상태 이어보기</strong><span>같은 브라우저에서 다시 열면 서버에 남아 있는 준비 작업을 이어서 확인합니다.</span></div>
         <div class="fact"><strong>임시 보관과 용량 제한</strong><span>파일은 마지막 사용 후 최대 1시간 보관합니다. 서버 재시작·절전 시 작업과 파일이 사라질 수 있습니다. 공간이 부족하면 준비를 중단하고 안내합니다.</span></div>
       </div>
     </section>
@@ -77,11 +76,8 @@
     <footer>이 도구는 접근 제한이나 DRM을 우회하지 않습니다. 서비스 약관과 저작권을 준수하세요.</footer>
   </main>
 
-  <script src="https://cdn.jsdelivr.net/npm/mux.js@6.3.0/dist/mux.min.js"></script>
-  <script src="./gateway.js"></script>
-  <script src="./app.js"></script>
-  <script src="./native-download.js?v=native-v4"></script>
-  <script src="./file-job-client.js?v=complete-file-v2-resume"></script>
+  <script src="./gateway.js?v=single-path-v1"></script>
+  <script src="./app.js?v=single-path-v1"></script>
+  <script src="./file-job-client.js?v=complete-file-v3"></script>
 </body>
 </html>
-

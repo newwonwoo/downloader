@@ -4,9 +4,12 @@ on:
   push:
     branches: [main, "fix/**", "test/**"]
     paths:
+      - "index.html"
+      - "app.js"
       - "gateway.js"
       - "native-download.js"
       - "file-job-client.js"
+      - "sw.js"
       - "downloader-worker/**"
       - ".github/workflows/render-production-smoke.yml"
   workflow_dispatch:
@@ -24,17 +27,69 @@ jobs:
       PAGE_URL: https://njavtv.com/dm890/ko/102816-005
       STREAM_URL: https://surrit.com/fee1f896-c34b-4caa-a712-0e8241e38cfc/640x360/video.m3u8
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify single-path frontend locally
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check app.js
+          node --check gateway.js
+          node --check file-job-client.js
+          node --check native-download.js
+          node --check sw.js
+          grep -q "FRONTEND_VERSION = 'single-path-v1'" app.js
+          grep -q 'warmDownloaderWorker' gateway.js
+          grep -q 'file-job-client.js' index.html
+          if grep -q 'mux.js' index.html; then
+            echo 'legacy mux.js must not be loaded'
+            exit 1
+          fi
+          if grep -q 'native-download.js' index.html; then
+            echo 'legacy native-download.js must not be loaded'
+            exit 1
+          fi
+          if grep -q 'backgroundFetch' app.js; then
+            echo 'legacy Background Fetch code returned to app.js'
+            exit 1
+          fi
+          grep -q 'registration.unregister' sw.js
+
       - name: Verify standalone web and worker wiring
         shell: bash
         run: |
           set -euo pipefail
+
+          if [ "$GITHUB_REF" = 'refs/heads/main' ]; then
+            ready=0
+            for attempt in $(seq 1 60); do
+              if curl -fsS --max-time 15 "$WEB_URL/app.js" -o /tmp/app.js && \
+                 grep -q "FRONTEND_VERSION = 'single-path-v1'" /tmp/app.js; then
+                ready=1
+                break
+              fi
+              echo "WEB_ROLLOUT_WAIT attempt=$attempt"
+              sleep 2
+            done
+            test "$ready" = "1"
+          fi
+
           curl -fsS --max-time 15 "$WEB_URL/" -o /tmp/index.html
           grep -q '영상 저장 도구' /tmp/index.html
           curl -fsS --max-time 15 "$WEB_URL/gateway.js" -o /tmp/gateway.js
           grep -q 'downloader-worker-brm7.onrender.com' /tmp/gateway.js
 
-          curl -fsS --max-time 15 -D /tmp/cors.txt -o /tmp/health.json \
-            -H "Origin: $WEB_URL" "$WORKER_URL/health"
+          status=000
+          for attempt in $(seq 1 60); do
+            status=$(curl -sS --max-time 15 -D /tmp/cors.txt -o /tmp/health.json \
+              -H "Origin: $WEB_URL" -w '%{http_code}' "$WORKER_URL/health" || true)
+            if [ "$status" = "200" ]; then
+              break
+            fi
+            echo "WORKER_WAKE_WAIT attempt=$attempt status=$status"
+            sleep 2
+          done
+          test "$status" = "200"
           cat /tmp/health.json
           grep -qi '^access-control-allow-origin: https://downloader-web-1gqu.onrender.com' /tmp/cors.txt
           python - <<'PY'
