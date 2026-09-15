@@ -1,40 +1,12 @@
 <!doctype html>
-<html lang="ko">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <meta name="robots" content="noindex,nofollow,noarchive" />
-  <meta name="theme-color" content="#080b10" />
-  <title>영상 저장 도구</title>
-  <link rel="stylesheet" href="./styles.css" />
-  <style>[hidden]{display:none!important}.native-link{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;font-family:inherit}</style>
-</head>
-<body>
-<main class="shell">
-<header class="top"><div class="brand"><span class="mark" aria-hidden="true">↓</span>영상 저장 도구</div><div class="privacy">완성 파일을 임시 보관합니다</div></header>
-<section>
-<h1>영상 링크를 복사하고<br />버튼만 누르세요.</h1>
-<p class="lead">삼성 인터넷에서 영상 페이지의 링크를 복사한 뒤 이 화면으로 돌아오세요. 주소를 직접 입력할 필요가 없습니다.</p>
-<div class="workspace">
-  <div class="mobile-entry">
-    <button id="pasteAnalyzeButton" class="paste-primary" type="button">복사한 주소로 영상 찾기</button>
-    <p id="pasteHint" class="paste-hint">NJAVTV에서 공유 → 링크 복사 → 이 버튼을 누르세요.</p>
-  </div>
-  <details class="manual-entry"><summary>주소를 직접 입력하기</summary>
-    <form id="analyzeForm" class="urlbox">
-      <input id="pageUrl" type="url" inputmode="url" autocomplete="off" spellcheck="false" aria-label="영상 페이지 주소" placeholder="https://njavtv.com/..." required />
-      <button id="analyzeButton" class="primary" type="submit">영상 찾기</button>
-    </form>
-  </details>
-  <div class="help"><span>DRM이 없는 공개 HLS 영상만 지원합니다. 본인이 소유했거나 저장 권한이 있는 영상에만 사용하세요.</span></div>
-  <div id="status" class="status" aria-live="polite"><div class="statusrow"><div class="spinner" aria-hidden="true"></div><div><strong id="statusTitle">페이지를 분석하고 있습니다</strong><span id="statusText">재생 주소와 화질을 확인합니다.</span></div></div></div>
-  <div id="error" class="error" role="alert"></div>
-  <div id="helperPanel" class="helper-panel" hidden><h3>서버에서 이 영상 페이지를 읽지 못했습니다</h3><p>이 경우에만 고급 추출 기능을 사용할 수 있습니다.</p><button id="copyHelper" type="button">고급 추출 코드 복사</button></div>
-  <div id="result" class="result"><div class="videohead"><h2 id="videoTitle"></h2><span id="videoCode" class="code"></span></div><div id="streams" class="streams"></div><div id="download" class="download"><div class="downloadtop"><strong id="downloadTitle">저장 준비</strong><span id="downloadPercent">0%</span></div><div class="progress"><div id="progressBar" class="bar"></div></div><div id="downloadMessage" class="downloadmsg">목록을 확인하고 있습니다.</div></div></div>
-</div>
-<div class="facts"><div class="fact"><strong>1. 링크 복사</strong><span>삼성 인터넷에서 영상 페이지의 공유 메뉴로 링크를 복사합니다.</span></div><div class="fact"><strong>2. 버튼 한 번</strong><span>다운로더에서 복사한 주소로 영상 찾기를 누릅니다.</span></div><div class="fact"><strong>3. MP4 저장</strong><span>파일 준비가 끝나면 휴대폰에 저장합니다.</span></div></div>
-</section>
-<footer>이 도구는 접근 제한이나 DRM을 우회하지 않습니다. 서비스 약관과 저작권을 준수하세요.</footer>
-</main>
-<script src="./gateway.js?v=single-path-v1"></script><script src="./app.js?v=mobile-entry-v1"></script><script src="./file-job-client.js?v=complete-file-v3"></script>
-</body></html>
+<html lang="ko"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" /><meta name="robots" content="noindex,nofollow,noarchive" /><meta name="theme-color" content="#080b10" /><title>영상 저장 도구</title><link rel="stylesheet" href="./styles.css" /><style>[hidden]{display:none!important}.native-link{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;font-family:inherit}</style></head>
+<body><main class="shell"><header class="top"><div class="brand"><span class="mark" aria-hidden="true">↓</span>영상 저장 도구</div><div class="privacy">완성 파일을 임시 보관합니다</div></header><section>
+<h1>링크 복사 후<br />여기서 한 번만 누르세요.</h1><p class="lead">삼성 인터넷에서 원하는 영상 페이지를 연 뒤 <strong>공유 → 링크 복사</strong>만 하세요.</p><div class="workspace"><div class="mobile-entry">
+<div class="entry-step"><span>1</span><div><strong>NJAVTV에서 링크 복사</strong><small>영상 페이지의 공유 메뉴에서 링크 복사를 누릅니다.</small></div></div><div class="entry-step"><span>2</span><div><strong>이 화면으로 돌아오기</strong><small>주소를 입력하거나 붙여넣을 필요가 없습니다.</small></div></div>
+<button id="pasteAnalyzeButton" class="paste-primary" type="button">복사한 영상 바로 찾기</button><p id="pasteHint" class="paste-hint">버튼을 누르면 복사한 NJAVTV 주소만 읽어 분석합니다.</p></div>
+<details id="manualEntry" class="manual-entry"><summary>안 되면 주소 직접 붙여넣기</summary><form id="analyzeForm" class="urlbox"><input id="pageUrl" type="url" inputmode="url" autocomplete="off" spellcheck="false" aria-label="영상 페이지 주소" placeholder="https://njavtv.com/..." required /><button id="analyzeButton" class="primary" type="submit">영상 찾기</button></form></details>
+<div class="help"><span>DRM이 없는 공개 HLS 영상만 지원합니다. 본인이 소유했거나 저장 권한이 있는 영상에만 사용하세요.</span></div><div id="status" class="status" aria-live="polite"><div class="statusrow"><div class="spinner" aria-hidden="true"></div><div><strong id="statusTitle">페이지를 분석하고 있습니다</strong><span id="statusText">재생 주소와 화질을 확인합니다.</span></div></div></div><div id="error" class="error" role="alert"></div>
+<div id="helperPanel" class="helper-panel" hidden><h3>일반 분석으로 재생 주소를 찾지 못했습니다</h3><p>고급 추출은 문제 해결용입니다. 평소에는 사용할 필요가 없습니다.</p><button id="copyHelper" type="button">고급 추출 코드 복사</button></div>
+<div id="result" class="result"><div class="videohead"><h2 id="videoTitle"></h2><span id="videoCode" class="code"></span></div><div id="streams" class="streams"></div><div id="download" class="download"><div class="downloadtop"><strong id="downloadTitle">저장 준비</strong><span id="downloadPercent">0%</span></div><div class="progress"><div id="progressBar" class="bar"></div></div><div id="downloadMessage" class="downloadmsg">목록을 확인하고 있습니다.</div></div></div></div>
+<div class="facts"><div class="fact"><strong>① 링크 복사</strong><span>삼성 인터넷의 공유 메뉴에서 링크 복사.</span></div><div class="fact"><strong>② 버튼 한 번</strong><span>복사한 영상 바로 찾기.</span></div><div class="fact"><strong>③ MP4 저장</strong><span>준비 완료 후 휴대폰에 저장.</span></div></div></section><footer>이 도구는 접근 제한이나 DRM을 우회하지 않습니다. 서비스 약관과 저작권을 준수하세요.</footer></main>
+<script src="./gateway.js?v=single-path-v1"></script><script src="./app.js?v=mobile-entry-v2"></script><script src="./file-job-client.js?v=complete-file-v3"></script></body></html>
