@@ -1,0 +1,10 @@
+{
+  "name": "downloader-browser-resolver",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {"start": "node server.js"},
+  "dependencies": {
+    "@sparticuz/chromium": "latest",
+    "playwright-core": "latest"
+  }
+}
