@@ -1,7 +1,7 @@
 import re
 from concurrent.futures import ThreadPoolExecutor
 from html import unescape
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 from curl_cffi import requests
 from fastapi import HTTPException
@@ -14,6 +14,7 @@ UUID_RE = re.compile(r'([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 M3U8_RE = re.compile(r'https?://[^\s\"\'<>\\]+?\.m3u8(?:\?[^\s\"\'<>\\]*)?', re.I)
 QUALITY_ORDER = ('1920x1080', '1280x720', '842x480', '640x360', '1080p', '720p', '480p', '360p')
 MIGRATED_WEB_ORIGIN = 'https://downloader-web-1gqu.onrender.com'
+BLOCK_RE = re.compile(r'cf-chl-|just a moment|verify you are human|checking your browser|challenge-platform', re.I)
 VERIFIED_TARGETS = {
     'njavtv.com/dm890/ko/102816-005': {
         'title': '102816-005 월간 시라사키 아오이',
@@ -76,38 +77,122 @@ def verified_target(page_url):
     }
 
 
-def headers(profile=1, manifest=False):
+def headers(profile=1, manifest=False, referer='https://njavtv.com/'):
     out = {
         'Accept': 'application/vnd.apple.mpegurl,application/x-mpegURL,text/plain,*/*' if manifest else 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.7,en;q=0.5',
         'Cache-Control': 'no-cache',
         'Pragma': 'no-cache',
+        'Upgrade-Insecure-Requests': '1',
     }
     if profile == 1:
-        out.update({'Referer': 'https://njavtv.com/', 'Origin': 'https://njavtv.com'})
+        out.update({
+            'Referer': referer,
+            'Origin': 'https://njavtv.com',
+            'Sec-Fetch-Dest': 'document' if not manifest else 'empty',
+            'Sec-Fetch-Mode': 'navigate' if not manifest else 'cors',
+            'Sec-Fetch-Site': 'same-origin' if not manifest else 'cross-site',
+            'Sec-Fetch-User': '?1' if not manifest else '?0',
+        })
     elif profile == 2:
-        out['Referer'] = 'https://njavtv.com/'
+        out['Referer'] = referer
     return out
-
-
-def fetch(url, timeout=10, manifest=False):
-    last = None
-    for profile in (1, 2, 3):
-        try:
-            response = requests.get(url, headers=headers(profile, manifest), impersonate='chrome', timeout=timeout, allow_redirects=True)
-        except Exception as error:
-            last = error
-            continue
-        last = response
-        if response.status_code not in (401, 403):
-            return response
-    if hasattr(last, 'status_code'):
-        return last
-    raise last or RuntimeError('request failed')
 
 
 def normalized_html(text):
     return unescape(str(text or '')).replace('\\u002F', '/').replace('\\/', '/')
+
+
+def blocked_response(response):
+    if response is None:
+        return True
+    if response.status_code in (401, 403, 429, 503):
+        return True
+    if response.status_code != 200:
+        return False
+    return bool(BLOCK_RE.search(normalized_html(response.text)))
+
+
+def alternate_source_url(url):
+    parsed = urlparse(url)
+    host = (parsed.hostname or '').lower()
+    if host == 'njavtv.com':
+        host = 'www.njavtv.com'
+    elif host == 'www.njavtv.com':
+        host = 'njavtv.com'
+    else:
+        return None
+    netloc = host if parsed.port is None else f'{host}:{parsed.port}'
+    return urlunparse(parsed._replace(netloc=netloc))
+
+
+def _session_fetch(url, timeout, manifest, impersonate):
+    session = requests.Session()
+    parsed = urlparse(url)
+    origin = f'{parsed.scheme}://{parsed.netloc}/'
+    try:
+        if parsed.hostname in SOURCE_HOSTS and not manifest:
+            try:
+                session.get(
+                    origin,
+                    headers=headers(2, False, origin),
+                    impersonate=impersonate,
+                    timeout=min(timeout, 8),
+                    allow_redirects=True,
+                )
+            except Exception:
+                pass
+        last = None
+        for profile in (1, 2, 3):
+            try:
+                response = session.get(
+                    url,
+                    headers=headers(profile, manifest, origin),
+                    impersonate=impersonate,
+                    timeout=timeout,
+                    allow_redirects=True,
+                )
+            except Exception as error:
+                last = error
+                continue
+            last = response
+            if manifest:
+                if response.status_code not in (401, 403, 429, 503):
+                    return response
+            elif not blocked_response(response):
+                return response
+        return last
+    finally:
+        try:
+            session.close()
+        except Exception:
+            pass
+
+
+def fetch(url, timeout=10, manifest=False):
+    last = None
+    targets = [url]
+    alternate = alternate_source_url(url) if not manifest else None
+    if alternate and alternate not in targets:
+        targets.append(alternate)
+
+    for target in targets:
+        for impersonate in ('chrome', 'safari'):
+            result = _session_fetch(target, timeout, manifest, impersonate)
+            if result is None:
+                continue
+            last = result
+            if manifest:
+                if hasattr(result, 'status_code') and result.status_code not in (401, 403, 429, 503):
+                    return result
+            elif hasattr(result, 'status_code') and not blocked_response(result):
+                return result
+
+    if hasattr(last, 'status_code'):
+        return last
+    if isinstance(last, Exception):
+        raise last
+    raise RuntimeError('request failed')
 
 
 def title_from(html):
@@ -157,7 +242,7 @@ def candidates(html, page_url):
 
 def probe(url):
     try:
-        response = fetch(url, timeout=6, manifest=True)
+        response = fetch(url, timeout=10, manifest=True)
         text = response.text if response.status_code == 200 else ''
         ok = response.status_code == 200 and '#EXTM3U' in text
         quality = next((q for q in QUALITY_ORDER if q.lower() in url.lower()), 'auto')
@@ -173,9 +258,9 @@ def resolve(page_url):
     if verified:
         return verified
 
-    response = fetch(page_url, timeout=10)
+    response = fetch(page_url, timeout=15)
     html = normalized_html(response.text)
-    if response.status_code != 200 or re.search(r'cf-chl-|just a moment|verify you are human|checking your browser', html, re.I):
+    if response.status_code != 200 or BLOCK_RE.search(html):
         raise HTTPException(409, detail={'code': 'SOURCE_BLOCKED', 'status': response.status_code})
 
     video_id, urls = candidates(html, page_url)
@@ -192,7 +277,7 @@ def resolve(page_url):
     streams.sort(key=lambda item: order.get(item['quality'], 999))
     return {
         'ok': True,
-        'resolver': 'render-curl-generic-v1',
+        'resolver': 'render-curl-session-v2',
         'title': title_from(html),
         'videoId': video_id,
         'pageUrl': page_url,
@@ -218,4 +303,4 @@ def install_resolver(app):
 
     @app.get('/resolve/health')
     def resolve_health():
-        return {'ok': True, 'resolver': 'render-curl-generic-v1', 'verifiedTargets': len(VERIFIED_TARGETS)}
+        return {'ok': True, 'resolver': 'render-curl-session-v2', 'verifiedTargets': len(VERIFIED_TARGETS)}
