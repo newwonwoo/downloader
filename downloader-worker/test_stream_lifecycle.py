@@ -56,6 +56,18 @@ class StreamLifecycleTests(unittest.TestCase):
             self.assertEqual(worker.adaptive_worker_count(1, 0.20), 1)
             self.assertEqual(worker.adaptive_worker_count(20, 0.20, max_workers=5), 5)
 
+    def test_prefetch_window_keeps_workers_fed_but_bounded(self):
+        with patch.object(worker, 'HLS_PREFETCH_FACTOR', 3), \
+             patch.object(worker, 'HLS_PREFETCH_MAX_SEGMENTS', 24):
+            self.assertEqual(worker.prefetch_window_count(100, 8), 24)
+            self.assertEqual(worker.prefetch_window_count(100, 2), 6)
+            self.assertEqual(worker.prefetch_window_count(10, 8), 9)
+            self.assertEqual(worker.prefetch_window_count(1, 8), 0)
+            self.assertEqual(
+                worker.prefetch_window_count(100, 8, factor=5, max_segments=12),
+                12,
+            )
+
     def test_large_error_log_does_not_block_media(self):
         self.fake_ffmpeg(
             "import os; os.write(2, b'error\\n' * 100000); "
