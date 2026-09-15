@@ -2,7 +2,8 @@
 
 const http = require('http');
 const { URL } = require('url');
-const sparticuz = require('@sparticuz/chromium');
+const chromiumModule = require('@sparticuz/chromium');
+const sparticuz = chromiumModule.default || chromiumModule;
 const { chromium } = require('playwright-core');
 
 const PORT = Number(process.env.PORT || 10000);
