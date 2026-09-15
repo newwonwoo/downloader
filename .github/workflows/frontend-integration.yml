@@ -1,7 +1,7 @@
 name: Downloader frontend integration
 on:
   push:
-    branches: [main, "feat/**", "fix/**", "perf/**"]
+    branches: [main, "feat/**", "fix/**", "perf/**", "test/**"]
     paths: ["index.html","styles.css","app.js","gateway.js","file-job-client.js","sw.js","test-browser-handoff.mjs",".github/workflows/frontend-integration.yml"]
   pull_request:
     paths: ["index.html","styles.css","app.js","gateway.js","file-job-client.js","sw.js","test-browser-handoff.mjs",".github/workflows/frontend-integration.yml"]
@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
-      - name: Validate mobile entry and existing download flow
+      - name: Validate Samsung mobile intake and existing download flow
         shell: bash
         run: |
           set -euo pipefail
@@ -21,12 +21,12 @@ jobs:
           node --check file-job-client.js
           node --check sw.js
           node test-browser-handoff.mjs
-          grep -Fq "FRONTEND_VERSION = 'mobile-entry-v1'" app.js
+          grep -Fq "FRONTEND_VERSION = 'mobile-entry-v2'" app.js
           grep -Fq 'pasteAnalyzeButton' index.html
-          grep -Fq '복사한 주소로 영상 찾기' index.html
           grep -Fq 'navigator.clipboard?.readText' app.js
+          grep -Fq 'window.isSecureContext' app.js
+          grep -Fq 'extractPageUrl' app.js
           grep -Fq "params.get('url')" app.js
-          grep -Fq 'normalizePageUrl' app.js
           grep -Fq 'file-job-client.js' index.html
           grep -Fq 'MAX_RECOVERY_ATTEMPTS = 2' file-job-client.js
           grep -Fq 'recoverMissingJob' file-job-client.js
