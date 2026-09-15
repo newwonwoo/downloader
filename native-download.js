@@ -1,5 +1,5 @@
 // Native handoff v4: a real user-clicked, top-level link; no hidden frame.
-const NATIVE_DOWNLOAD_BASE = 'https://unisquads-downloader-worker.onrender.com';
+const NATIVE_DOWNLOAD_BASE = 'https://downloader-worker-brm7.onrender.com';
 const NATIVE_READY_TTL = 60_000;
 let nativeReadyAt = 0;
 let nativeWarmPromise = null;
