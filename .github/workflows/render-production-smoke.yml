@@ -1,0 +1,70 @@
+name: Render production smoke
+
+on:
+  push:
+    branches: [main, "fix/**"]
+    paths:
+      - "native-download.js"
+      - "file-job-client.js"
+      - "downloader-worker/**"
+      - ".github/workflows/render-production-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      WORKER_URL: https://downloader-worker-brm7.onrender.com
+      STREAM_URL: https://surrit.com/fee1f896-c34b-4caa-a712-0e8241e38cfc/640x360/video.m3u8
+    steps:
+      - name: Verify health and file-job route
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            if curl -fsS --max-time 10 "$WORKER_URL/health" > /tmp/health.json; then
+              break
+            fi
+            sleep 2
+          done
+          cat /tmp/health.json
+          python - <<'PY'
+          import json
+          data=json.load(open('/tmp/health.json'))
+          assert data['ok'] is True
+          assert data['mode'] == 'native-mobile-stream-v5-files'
+          PY
+          status=$(curl -sS --max-time 10 -o /tmp/jobs.json -w '%{http_code}' \
+            -H 'content-type: application/json' -d '{}' "$WORKER_URL/jobs")
+          cat /tmp/jobs.json
+          test "$status" = "422"
+
+      - name: Verify real MP4 output
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          curl -fSs --max-time 15 \
+            --get "$WORKER_URL/download" \
+            --data-urlencode "stream_url=$STREAM_URL" \
+            --data-urlencode 'title=migrated-production-smoke' \
+            --data-urlencode 'quality=640x360' \
+            -o /tmp/native.mp4
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 28 ]; then
+            exit "$rc"
+          fi
+          bytes=$(stat -c %s /tmp/native.mp4 2>/dev/null || echo 0)
+          echo "MP4_PREFIX_BYTES=$bytes"
+          test "$bytes" -gt 32768
+          python - <<'PY'
+          from pathlib import Path
+          data=Path('/tmp/native.mp4').read_bytes()[:256]
+          assert b'ftyp' in data, data[:32].hex()
+          print('MP4_FTYP_OK')
+          PY
