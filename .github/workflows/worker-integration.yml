@@ -43,22 +43,36 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          (cd downloader-worker && PATH="$PWD/.bin:$PATH" uvicorn app:app --host 127.0.0.1 --port 18080 >/tmp/worker.log 2>&1) &
+          (cd downloader-worker && RENDER_GIT_COMMIT=local-integration-sha PATH="$PWD/.bin:$PATH" uvicorn app:app --host 127.0.0.1 --port 18080 >/tmp/worker.log 2>&1) &
           echo $! >/tmp/worker.pid
           for attempt in $(seq 1 30); do
-            if curl -fsS --max-time 2 http://127.0.0.1:18080/health >/tmp/health.json; then
+            if curl -fsS --max-time 2 -D /tmp/health-headers.txt http://127.0.0.1:18080/health >/tmp/health.json; then
               cat /tmp/health.json
               break
             fi
             sleep 1
           done
           test -s /tmp/health.json
+          grep -qi '^x-worker-git-commit: local-integration-sha' /tmp/health-headers.txt
           python - <<'PY'
           import json
           data=json.load(open('/tmp/health.json'))
           assert data['ok'] is True
           assert data['mode']=='native-mobile-stream-v5-files'
           PY
+
+          curl -fsS --max-time 2 -D /tmp/root-headers.txt http://127.0.0.1:18080/ >/tmp/root.json
+          grep -qi '^x-worker-git-commit: local-integration-sha' /tmp/root-headers.txt
+          python - <<'PY'
+          import json
+          data=json.load(open('/tmp/root.json'))
+          assert data == {
+              'ok': True,
+              'mode': 'native-mobile-stream-v5-files',
+              'gitCommit': 'local-integration-sha',
+          }
+          PY
+
           status=$(curl -sS -o /tmp/jobs.json -w '%{http_code}' -H 'content-type: application/json' -d '{}' http://127.0.0.1:18080/jobs)
           test "$status" = "422"
       - name: Diagnostics
