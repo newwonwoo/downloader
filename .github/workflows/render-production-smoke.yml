@@ -2,7 +2,7 @@ name: Render production smoke
 on:
   push:
     branches: [main, "fix/**", "test/**", "chore/**"]
-    paths: ["index.html","styles.css","app.js","gateway.js","file-job-client.js","sw.js","test-browser-handoff.mjs","downloader-worker/**","README.md",".github/workflows/render-production-smoke.yml"]
+    paths: ["index.html","styles.css","app.js","gateway.js","file-job-client.js","sw.js","manifest.webmanifest","app-icon.svg","test-browser-handoff.mjs","test-mobile-entry.mjs","downloader-worker/**","README.md",".github/workflows/render-production-smoke.yml"]
   workflow_dispatch:
 permissions: {contents: read}
 jobs:
@@ -16,19 +16,19 @@ jobs:
       STREAM_URL: https://surrit.com/fee1f896-c34b-4caa-a712-0e8241e38cfc/640x360/video.m3u8
     steps:
       - uses: actions/checkout@v4
-      - name: Verify repository and mobile contracts locally
+      - name: Verify Samsung share target contracts locally
         shell: bash
         run: |
           set -euo pipefail
           test ! -d api; test ! -e package.json; test ! -e requirements.txt; test ! -e vercel.json
-          node --check app.js; node --check gateway.js; node --check file-job-client.js; node test-browser-handoff.mjs
-          grep -Fq "FRONTEND_VERSION = 'mobile-entry-v2'" app.js
-          grep -Fq 'pasteAnalyzeButton' index.html
-          grep -Fq '복사한 영상 바로 찾기' index.html
-          grep -Fq 'navigator.clipboard?.readText' app.js
-          grep -Fq 'window.isSecureContext' app.js
-          grep -Fq 'extractPageUrl' app.js
-          grep -Fq "params.get('url')" app.js
+          node --check app.js; node --check gateway.js; node --check file-job-client.js; node --check sw.js
+          node test-mobile-entry.mjs; node test-browser-handoff.mjs
+          grep -Fq "FRONTEND_VERSION = 'samsung-share-v3'" app.js
+          grep -Fq 'rel="manifest"' index.html
+          grep -Fq 'share_target' manifest.webmanifest
+          grep -Fq 'share_target' sw.js
+          grep -Fq 'beforeinstallprompt' app.js
+          grep -Fq 'serviceWorker.register' app.js
           grep -Fq 'MAX_RECOVERY_ATTEMPTS = 2' file-job-client.js
           grep -Fq "DOWNLOAD_WORKERS = max(1, int(os.getenv('DOWNLOAD_WORKERS', '8')))" downloader-worker/app.py
           grep -Fq "MAX_QUEUED_JOBS = max(0, int(os.getenv('MAX_QUEUED_FILE_JOBS', '2')))" downloader-worker/file_jobs.py
@@ -38,7 +38,7 @@ jobs:
           set -euo pipefail
           ready=0
           for attempt in $(seq 1 90); do
-            if curl -fsS --max-time 15 "$WEB_URL/app.js" -o /tmp/app.js && curl -fsS --max-time 15 "$WEB_URL/" -o /tmp/index.html && grep -Fq "FRONTEND_VERSION = 'mobile-entry-v2'" /tmp/app.js && grep -Fq '복사한 영상 바로 찾기' /tmp/index.html; then ready=1; break; fi
+            if curl -fsS --max-time 15 "$WEB_URL/app.js" -o /tmp/app.js && curl -fsS --max-time 15 "$WEB_URL/" -o /tmp/index.html && curl -fsS --max-time 15 "$WEB_URL/sw.js" -o /tmp/sw.js && grep -Fq "FRONTEND_VERSION = 'samsung-share-v3'" /tmp/app.js && grep -Fq '영상에서 공유만 누르세요' /tmp/index.html && grep -Fq 'share_target' /tmp/sw.js; then ready=1; break; fi
             sleep 2
           done
           test "$ready" = 1
@@ -61,7 +61,7 @@ jobs:
           d=json.load(open('/tmp/resolve.json')); assert d['ok'] and d['streams']
           PY
           set +e
-          curl -fSs --max-time 30 --get "$WORKER_URL/download" --data-urlencode "stream_url=$STREAM_URL" --data-urlencode 'title=mobile-entry-smoke' --data-urlencode 'quality=640x360' -o /tmp/native.mp4
+          curl -fSs --max-time 30 --get "$WORKER_URL/download" --data-urlencode "stream_url=$STREAM_URL" --data-urlencode 'title=samsung-share-smoke' --data-urlencode 'quality=640x360' -o /tmp/native.mp4
           rc=$?; set -e
           if [ "$rc" -ne 0 ] && [ "$rc" -ne 28 ]; then exit "$rc"; fi
           test "$(stat -c %s /tmp/native.mp4 2>/dev/null || echo 0)" -gt 32768
