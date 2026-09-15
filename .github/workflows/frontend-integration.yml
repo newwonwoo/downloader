@@ -1,0 +1,42 @@
+name: Downloader frontend integration
+
+on:
+  push:
+    branches: [main, "feat/**", "fix/**", "perf/**"]
+    paths:
+      - "index.html"
+      - "app.js"
+      - "gateway.js"
+      - "file-job-client.js"
+      - "sw.js"
+      - ".github/workflows/frontend-integration.yml"
+  pull_request:
+    paths:
+      - "index.html"
+      - "app.js"
+      - "gateway.js"
+      - "file-job-client.js"
+      - "sw.js"
+      - ".github/workflows/frontend-integration.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate browser scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check app.js
+          node --check gateway.js
+          node --check file-job-client.js
+          node --check sw.js
+          grep -q 'file-job-client.js' index.html
+          grep -q 'startedAt: Date.now()' file-job-client.js
+          grep -q 'MB/s' file-job-client.js
+          grep -q '남음' file-job-client.js
