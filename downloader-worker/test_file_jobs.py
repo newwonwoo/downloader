@@ -106,6 +106,28 @@ class FileJobTests(unittest.TestCase):
         self.assertEqual(self.finish(job_id)['status'], 'failed')
         self.assertEqual(list(self.store.root.iterdir()), [])
 
+    def test_large_stream_throttles_disk_usage_probes(self):
+        chunk = b'\x00\x00\x00\x20ftypisom' + b'x' * (1024 - 12)
+        self.store.DISK_CHECK_INTERVAL_BYTES = 4 * 1024
+        self.store.BYTE_PROGRESS_INTERVAL = 4 * 1024
+        self.gate.set()
+
+        def prepare(url, on_progress):
+            def body():
+                for index in range(20):
+                    on_progress(index + 1, 20)
+                    yield chunk
+            return body(), 'fixture'
+
+        self.store.prepare = prepare
+        usage = namedtuple('usage', 'total used free')(2**31, 0, 2**30)
+        with patch('file_jobs.shutil.disk_usage', return_value=usage) as disk_usage:
+            job_id = self.create()
+            job = self.finish(job_id)
+        self.assertEqual(job['status'], 'ready')
+        self.assertEqual(job['bytes'], len(chunk) * 20)
+        self.assertLessEqual(disk_usage.call_count, 7)
+
     def test_expiry_and_restart_are_explicit(self):
         job_id = self.create()
         job = self.finish(job_id)

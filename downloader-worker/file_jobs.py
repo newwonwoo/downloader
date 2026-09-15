@@ -25,6 +25,8 @@ class FileJobs:
     MAX_JOBS = 3
     MAX_BYTES = int(os.getenv('MAX_FILE_BYTES', str(16 * 1024**3)))
     FREE_RESERVE = 256 * 1024**2
+    DISK_CHECK_INTERVAL_BYTES = int(os.getenv('DISK_CHECK_INTERVAL_BYTES', str(32 * 1024**2)))
+    BYTE_PROGRESS_INTERVAL = int(os.getenv('BYTE_PROGRESS_INTERVAL', str(1 * 1024**2)))
 
     def __init__(self, allowed, prepare, slots, safe_name, root=None):
         self.allowed, self.prepare, self.slots, self.safe_name = allowed, prepare, slots, safe_name
@@ -70,7 +72,8 @@ class FileJobs:
             if self.preparing or len(self.jobs) >= self.MAX_JOBS:
                 raise HTTPException(503, '서버가 다른 파일을 준비 중이거나 임시 보관함이 가득 찼습니다. 잠시 후 다시 시도하세요.',
                                     headers={'Retry-After': '10'})
-            if shutil.disk_usage(self.root).free < self.FREE_RESERVE * 2:
+            free_bytes = shutil.disk_usage(self.root).free
+            if free_bytes < self.FREE_RESERVE * 2:
                 raise HTTPException(507, '파일 준비에 필요한 임시 공간이 부족합니다.')
             if not self.slots.acquire(blocking=False):
                 raise HTTPException(503, '기존 다운로드 작업이 정리 중입니다. 잠시 후 다시 시도하세요.',
@@ -80,7 +83,7 @@ class FileJobs:
                        title=self.safe_name(data.title), quality=self.safe_name(data.quality),
                        status='preparing', bytes=0, completedSegments=0, totalSegments=0,
                        message='영상 목록 확인 중', sha256=None, readers=0, touched=time.time(),
-                       limit=min(self.MAX_BYTES, shutil.disk_usage(self.root).free - self.FREE_RESERVE))
+                       limit=min(self.MAX_BYTES, free_bytes - self.FREE_RESERVE))
             self.jobs[job_id] = job
             self.preparing = True
             try:
@@ -99,37 +102,48 @@ class FileJobs:
         started = time.monotonic()
         job = self.jobs[job_id]
         digest = hashlib.sha256()
+        bytes_written = 0
+        next_disk_check = 0
+        next_progress_update = self.BYTE_PROGRESS_INTERVAL
+
         def progress(done, total):
             with self.lock:
                 job.update(completedSegments=done, totalSegments=total, message='MP4 파일 준비 중')
+
         try:
             body, _ = self.prepare(job['stream_url'], on_progress=progress)
             with part.open('wb') as output:
                 for chunk in body:
                     if time.monotonic() - started > 3600:
                         raise RuntimeError('파일 준비 제한 시간(1시간)을 초과했습니다.')
-                    if output.tell() + len(chunk) > job['limit']:
+                    projected = bytes_written + len(chunk)
+                    if projected > job['limit']:
                         raise RuntimeError('영상이 서버의 현재 임시 저장 가능 용량을 초과했습니다.')
-                    if shutil.disk_usage(self.root).free < self.FREE_RESERVE:
-                        raise RuntimeError('파일 준비 중 임시 공간이 부족해졌습니다.')
+                    if projected >= next_disk_check:
+                        if shutil.disk_usage(self.root).free < self.FREE_RESERVE:
+                            raise RuntimeError('파일 준비 중 임시 공간이 부족해졌습니다.')
+                        next_disk_check = projected + self.DISK_CHECK_INTERVAL_BYTES
                     output.write(chunk)
                     digest.update(chunk)
-                    with self.lock:
-                        job['bytes'] = output.tell()
+                    bytes_written = projected
+                    if bytes_written >= next_progress_update:
+                        with self.lock:
+                            job['bytes'] = bytes_written
+                        next_progress_update = bytes_written + self.BYTE_PROGRESS_INTERVAL
             with part.open('rb') as check:
                 header = check.read(128)
-            if job['bytes'] < 32 or b'ftyp' not in header:
+            if bytes_written < 32 or b'ftyp' not in header:
                 raise RuntimeError('완성된 MP4 파일을 확인하지 못했습니다.')
             final = part.with_suffix('.mp4')
             os.replace(part, final)
             with self.lock:
-                job.update(status='ready', sha256=digest.hexdigest(), touched=time.time(),
+                job.update(status='ready', bytes=bytes_written, sha256=digest.hexdigest(), touched=time.time(),
                            message='파일 준비 완료 · 휴대폰에 저장을 누르세요')
             print(f"FILE_JOB_READY id={job_id} bytes={job['bytes']} sha256={job['sha256']}", flush=True)
         except Exception as exc:
             part.unlink(missing_ok=True)
             with self.lock:
-                job.update(status='failed', message=str(exc)[:300], touched=time.time())
+                job.update(status='failed', bytes=bytes_written, message=str(exc)[:300], touched=time.time())
             print(f'FILE_JOB_FAILED id={job_id} error={exc!r}', flush=True)
         finally:
             try:
