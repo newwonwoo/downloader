@@ -10,6 +10,7 @@ const PORT = Number(process.env.PORT || 10000);
 const SOURCE_HOSTS = new Set(['njavtv.com', 'www.njavtv.com']);
 const MEDIA_SUFFIXES = ['surrit.com', 'nineyu.com'];
 const MAX_BODY = 8192;
+const BLOCK_RE = /cf-chl-|just a moment|verify you are human|checking your browser|challenge-platform|잠시만 기다리십시오/i;
 let browserPromise = null;
 
 function validSource(raw) {
@@ -35,12 +36,22 @@ async function getBrowser() {
     const args = Array.isArray(sparticuz.args) ? sparticuz.args : [];
     console.log(`CHROMIUM path=${executablePath} args=${args.length}`);
     browserPromise = chromium.launch({
-      args: [...args, '--autoplay-policy=no-user-gesture-required'],
+      args: [...args, '--autoplay-policy=no-user-gesture-required', '--disable-blink-features=AutomationControlled'],
       executablePath,
       headless: true,
     }).catch(err => { browserPromise = null; throw err; });
   }
   return browserPromise;
+}
+async function waitChallenge(page, maxMs = 15000) {
+  const started = Date.now();
+  while (Date.now() - started < maxMs) {
+    const html = await page.content().catch(() => '');
+    const title = await page.title().catch(() => '');
+    if (!BLOCK_RE.test(html) && !BLOCK_RE.test(title)) return false;
+    await page.waitForTimeout(1500);
+  }
+  return true;
 }
 async function resolvePage(pageUrl) {
   const browser = await getBrowser();
@@ -48,7 +59,15 @@ async function resolvePage(pageUrl) {
     locale: 'ko-KR',
     timezoneId: 'Asia/Seoul',
     viewport: { width: 412, height: 915 },
-    userAgent: 'Mozilla/5.0 (Linux; Android 16; SM-S937N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36',
+    extraHTTPHeaders: {
+      'accept-language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+      'upgrade-insecure-requests': '1',
+    },
+  });
+  await context.addInitScript(() => {
+    try { Object.defineProperty(navigator, 'webdriver', { get: () => undefined }); } catch {}
+    try { Object.defineProperty(navigator, 'languages', { get: () => ['ko-KR', 'ko', 'en-US', 'en'] }); } catch {}
+    try { Object.defineProperty(navigator, 'platform', { get: () => 'Linux armv8l' }); } catch {}
   });
   const page = await context.newPage();
   const found = new Set();
@@ -58,8 +77,13 @@ async function resolvePage(pageUrl) {
   let status = 0;
   let title = 'video';
   try {
-    const response = await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
+    const target = new URL(pageUrl);
+    const origin = `${target.protocol}//${target.host}/`;
+    await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 25000 }).catch(() => null);
+    await waitChallenge(page, 10000);
+    const response = await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     status = response ? response.status() : 0;
+    const blockedAfterWait = await waitChallenge(page, 15000);
     await page.waitForTimeout(2500);
     title = (await page.title().catch(() => 'video')) || 'video';
     const urls = await page.evaluate(() => {
@@ -73,7 +97,7 @@ async function resolvePage(pageUrl) {
       return out;
     }).catch(() => []);
     urls.forEach(capture);
-    if (!found.size) {
+    if (!found.size && !blockedAfterWait) {
       const video = page.locator('video').first();
       if (await video.count()) {
         await video.click({ force: true, timeout: 2000 }).catch(() => {});
@@ -81,7 +105,7 @@ async function resolvePage(pageUrl) {
       }
     }
     const html = await page.content().catch(() => '');
-    const blocked = /cf-chl-|just a moment|verify you are human|checking your browser|challenge-platform/i.test(html);
+    const blocked = blockedAfterWait || BLOCK_RE.test(html) || BLOCK_RE.test(title);
     return { ok: found.size > 0, status, blocked, title, streams: [...found].slice(0, 12) };
   } finally {
     await context.close().catch(() => {});
@@ -93,7 +117,7 @@ function json(res, code, data) {
   res.end(body);
 }
 const server = http.createServer(async (req, res) => {
-  if (req.method === 'GET' && req.url === '/health') return json(res, 200, { ok: true, mode: 'browser-network-resolver-v1' });
+  if (req.method === 'GET' && req.url === '/health') return json(res, 200, { ok: true, mode: 'browser-network-resolver-v2' });
   if (req.method !== 'POST' || req.url !== '/resolve') return json(res, 404, { ok: false });
   let raw = '';
   req.on('data', chunk => { raw += chunk; if (raw.length > MAX_BODY) req.destroy(); });
