@@ -17,7 +17,7 @@ permissions:
 jobs:
   production-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 8
     env:
       WEB_URL: https://downloader-web-1gqu.onrender.com
       WORKER_URL: https://downloader-worker-brm7.onrender.com
@@ -49,14 +49,23 @@ jobs:
           cat /tmp/jobs.json
           test "$status" = "422"
 
-      - name: Verify page resolver
+      - name: Verify page resolver after main rollout
+        if: github.ref == 'refs/heads/main'
         shell: bash
         run: |
           set -euo pipefail
-          status=$(curl -sS --max-time 45 -o /tmp/resolve.json -w '%{http_code}' \
-            -H 'content-type: application/json' -H "Origin: $WEB_URL" \
-            -d "{\"url\":\"$PAGE_URL\"}" "$WORKER_URL/resolve")
-          cat /tmp/resolve.json
+          status=000
+          for attempt in $(seq 1 60); do
+            status=$(curl -sS --max-time 15 -o /tmp/resolve.json -w '%{http_code}' \
+              -H 'content-type: application/json' -H "Origin: $WEB_URL" \
+              -d "{\"url\":\"$PAGE_URL\"}" "$WORKER_URL/resolve" || true)
+            cat /tmp/resolve.json || true
+            if [ "$status" = "200" ]; then
+              break
+            fi
+            echo "RESOLVER_WAIT attempt=$attempt status=$status"
+            sleep 2
+          done
           test "$status" = "200"
           python - <<'PY'
           import json
