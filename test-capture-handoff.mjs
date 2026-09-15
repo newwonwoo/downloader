@@ -6,7 +6,7 @@ const allowedMatch = app.match(/function allowedImportedHls\(v\)\{[\s\S]*?\}\s*f
 assert.ok(allowedMatch, 'allowedImportedHls contract must exist');
 const allowedSource = allowedMatch[0].replace(/\s*function importedQuality[\s\S]*$/, '');
 // eslint-disable-next-line no-eval
-eval(`${allowedSource};globalThis.__allowedImportedHls=allowedImportedHls`);
+eval(`const HLS_IMPORT_HOSTS=['surrit.com','nineyu.com'];${allowedSource};globalThis.__allowedImportedHls=allowedImportedHls`);
 
 assert.equal(globalThis.__allowedImportedHls('https://surrit.com/a/video.m3u8'), 'https://surrit.com/a/video.m3u8');
 assert.equal(globalThis.__allowedImportedHls('https://cdn.nineyu.com/x/master.m3u8?token=1'), 'https://cdn.nineyu.com/x/master.m3u8?token=1');
