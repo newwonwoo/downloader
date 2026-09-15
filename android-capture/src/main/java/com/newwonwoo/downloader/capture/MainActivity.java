@@ -6,6 +6,7 @@ import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -23,6 +24,7 @@ import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.net.URI;
 import java.util.ArrayList;
@@ -70,7 +72,7 @@ public final class MainActivity extends Activity {
         }
         handedOff = true;
         mainHandler.removeCallbacks(timeoutRunnable);
-        openDownloader(stream);
+        startDirectDownload(stream);
     };
 
     @Override
@@ -301,7 +303,7 @@ public final class MainActivity extends Activity {
         }
         if (!added) return;
         mainHandler.post(() -> {
-            setStatus("영상 주소를 찾았습니다. 저장 화면을 여는 중입니다…");
+            setStatus("영상 주소를 찾았습니다. 휴대폰 직접 다운로드를 시작합니다…");
             playButton.setVisibility(View.GONE);
             retryButton.setVisibility(View.GONE);
             if (!handoffScheduled) {
@@ -380,6 +382,27 @@ public final class MainActivity extends Activity {
         }
         handoffScheduled = false;
         handedOff = false;
+    }
+
+    private void startDirectDownload(String stream) {
+        String title = safeTitle();
+        String cookie = CookieManager.getInstance().getCookie(stream);
+        Intent download = new Intent(this, HlsDownloadService.class)
+                .putExtra(HlsDownloadService.EXTRA_STREAM, stream)
+                .putExtra(HlsDownloadService.EXTRA_PAGE, pageUrl == null ? "" : pageUrl)
+                .putExtra(HlsDownloadService.EXTRA_TITLE, title)
+                .putExtra(HlsDownloadService.EXTRA_COOKIE, cookie == null ? "" : cookie);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(download);
+            else startService(download);
+            CookieManager.getInstance().flush();
+            Toast.makeText(this, "직접 다운로드를 시작했습니다. 다른 화면으로 이동해도 계속됩니다.", Toast.LENGTH_LONG).show();
+            finish();
+        } catch (RuntimeException error) {
+            handedOff = false;
+            handoffScheduled = false;
+            openDownloader(stream);
+        }
     }
 
     private void openDownloader(String stream) {

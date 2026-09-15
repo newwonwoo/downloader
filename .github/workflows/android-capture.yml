@@ -2,7 +2,7 @@ name: Android capture APK
 
 on:
   push:
-    branches: [main, "feat/android-capture-v1", "ci/android-capture-apk"]
+    branches: [main, "feat/**", "ci/**", "fix/**", "perf/**"]
     paths:
       - "android-capture/**"
       - "settings.gradle.kts"
@@ -59,10 +59,16 @@ jobs:
           node test-capture-handoff.mjs
           grep -Fq 'android.intent.action.SEND' android-capture/src/main/AndroidManifest.xml
           grep -Fq 'android:mimeType="text/plain"' android-capture/src/main/AndroidManifest.xml
+          grep -Fq 'android.permission.FOREGROUND_SERVICE_DATA_SYNC' android-capture/src/main/AndroidManifest.xml
+          grep -Fq 'android:foregroundServiceType="dataSync"' android-capture/src/main/AndroidManifest.xml
           grep -Fq 'shouldInterceptRequest' android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
           grep -Fq 'ServiceWorkerController' android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
           grep -Fq '@JavascriptInterface' android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
           grep -Fq 'setAllowFileAccess(false)' android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
+          grep -Fq 'startForegroundService(download)' android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
+          grep -Fq 'NETWORK_WORKERS = 12' android-capture/src/main/java/com/newwonwoo/downloader/capture/HlsDownloadService.java
+          grep -Fq 'MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4' android-capture/src/main/java/com/newwonwoo/downloader/capture/HlsDownloadService.java
+          grep -Fq 'MediaStore.Video.Media.RELATIVE_PATH' android-capture/src/main/java/com/newwonwoo/downloader/capture/HlsDownloadService.java
           grep -Fq 'appendQueryParameter("capture", "1")' android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
           grep -Fq 'appendQueryParameter("stream", stream)' android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
 
