@@ -1,0 +1,31 @@
+name: Browser resolver live probe
+on:
+  push:
+    branches: ["feat/browser-resolver"]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Probe exact reported page
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://njavtv.com/dm2/ko/ktkp-001-uncensored-leak'
+          status=$(curl -sS --max-time 60 -o /tmp/body.json -w '%{http_code}' \
+            -H 'content-type: application/json' \
+            -d "{\"url\":\"$url\"}" \
+            'https://downloader-browser-resolver.onrender.com/resolve' || true)
+          echo "STATUS=$status"
+          cat /tmp/body.json || true
+          echo
+          test "$status" = '200'
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/body.json'))
+          assert d.get('ok') is True
+          assert d.get('streams')
+          print('BROWSER_RESOLVER_OK', d.get('status'), len(d['streams']))
+          PY
