@@ -7,97 +7,34 @@
   <meta name="theme-color" content="#080b10" />
   <title>영상 저장 도구</title>
   <link rel="stylesheet" href="./styles.css" />
-  <style>
-    [hidden]{display:none!important}
-    .native-link{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;font-family:inherit}
-    .native-link[aria-disabled="true"]{opacity:.5;cursor:wait}
-    .native-link:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
-    .helper-panel{margin-top:18px;padding:22px;border:1px solid #334155;border-radius:22px;background:#0c131d}
-    .helper-panel h3{margin:0 0 8px;font-size:1.05rem}
-    .helper-panel p{margin:0 0 14px;color:#a8b3c5;line-height:1.55}
-    .helper-actions{display:grid;grid-template-columns:1fr;gap:10px}
-    .helper-actions button{min-height:52px;border:0;border-radius:15px;padding:0 14px;font:inherit;font-weight:800;display:flex;align-items:center;justify-content:center;cursor:pointer;background:#70e0bd;color:#07120f}
-    .helper-steps{margin:14px 0 0;padding-left:20px;color:#cbd5e1;line-height:1.6;font-size:.94rem}
-  </style>
+  <style>[hidden]{display:none!important}.native-link{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;font-family:inherit}</style>
 </head>
 <body>
-  <main class="shell">
-    <header class="top">
-      <div class="brand">
-        <span class="mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3">
-            <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 20h14" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-        </span>
-        영상 저장 도구
-      </div>
-      <div class="privacy">완성 파일을 임시 보관합니다</div>
-    </header>
-
-    <section>
-      <h1>링크 하나로<br />영상을 저장합니다.</h1>
-      <p class="lead">영상 주소를 분석하고 MP4 준비를 누르세요. 파일 준비는 서버에서 계속 진행되며, 페이지를 다시 열면 진행 상태를 이어서 확인할 수 있습니다.</p>
-
-      <div class="workspace">
-        <form id="analyzeForm" class="urlbox">
-          <input id="pageUrl" type="url" inputmode="url" autocomplete="off" spellcheck="false" aria-label="영상 페이지 주소" value="https://njavtv.com/dm890/ko/102816-005" required />
-          <button id="analyzeButton" class="primary" type="submit">영상 찾기</button>
-        </form>
-
-        <div class="help">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <circle cx="12" cy="12" r="9" />
-            <path d="M12 11v5m0-8h.01" stroke-linecap="round" />
-          </svg>
-          <span>DRM이 없는 공개 HLS 영상만 지원합니다. 본인이 소유했거나 저장 권한이 있는 영상에만 사용하세요.</span>
-        </div>
-
-        <div id="status" class="status" aria-live="polite">
-          <div class="statusrow">
-            <div class="spinner" aria-hidden="true"></div>
-            <div><strong id="statusTitle">페이지를 분석하고 있습니다</strong><span id="statusText">재생 주소와 화질을 확인합니다.</span></div>
-          </div>
-        </div>
-
-        <div id="error" class="error" role="alert"></div>
-
-        <div id="helperPanel" class="helper-panel" hidden>
-          <h3>NJAVTV 전체 영상용 · 최초 1회 설정</h3>
-          <p>서버에서 NJAVTV 페이지 분석이 막힐 때만 사용합니다. 휴대폰 브라우저 안에서 현재 영상의 공개 HLS 재생 주소만 읽어 이 사이트로 넘깁니다.</p>
-          <div class="helper-actions">
-            <button id="copyHelper" type="button">추출 도우미 코드 복사</button>
-          </div>
-          <ol class="helper-steps">
-            <li>이 페이지를 브라우저 북마크로 저장합니다.</li>
-            <li>저장한 북마크를 편집해 주소 전체를 방금 복사한 코드로 교체합니다.</li>
-            <li>NJAVTV에서 원하는 영상을 연 뒤 그 북마크를 실행합니다.</li>
-            <li>재생 주소가 잡히면 자동으로 돌아와 MP4 준비 버튼이 나타납니다.</li>
-          </ol>
-        </div>
-
-        <div id="result" class="result">
-          <div class="videohead"><h2 id="videoTitle"></h2><span id="videoCode" class="code"></span></div>
-          <div id="streams" class="streams"></div>
-          <div id="download" class="download">
-            <div class="downloadtop"><strong id="downloadTitle">저장 준비</strong><span id="downloadPercent">0%</span></div>
-            <div class="progress"><div id="progressBar" class="bar"></div></div>
-            <div id="downloadMessage" class="downloadmsg">목록을 확인하고 있습니다.</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="facts">
-        <div class="fact"><strong>NJAVTV 범용 경로</strong><span>서버 분석이 막히면 특정 영상 번호가 아니라 현재 페이지의 HLS 재생 주소를 브라우저에서 읽어 전달합니다.</span></div>
-        <div class="fact"><strong>완성 후 휴대폰에 저장</strong><span>준비가 끝나면 용량이 확정된 MP4 파일을 다운로드 관리자로 전달합니다.</span></div>
-        <div class="fact"><strong>진행 상태 이어보기</strong><span>같은 브라우저에서 다시 열면 서버에 남아 있는 준비 작업을 이어서 확인합니다.</span></div>
-      </div>
-    </section>
-
-    <footer>이 도구는 접근 제한이나 DRM을 우회하지 않습니다. 서비스 약관과 저작권을 준수하세요.</footer>
-  </main>
-
-  <script src="./gateway.js?v=single-path-v1"></script>
-  <script src="./app.js?v=single-path-v2-browser-handoff"></script>
-  <script src="./file-job-client.js?v=complete-file-v3"></script>
-</body>
-</html>
+<main class="shell">
+<header class="top"><div class="brand"><span class="mark" aria-hidden="true">↓</span>영상 저장 도구</div><div class="privacy">완성 파일을 임시 보관합니다</div></header>
+<section>
+<h1>영상 링크를 복사하고<br />버튼만 누르세요.</h1>
+<p class="lead">삼성 인터넷에서 영상 페이지의 링크를 복사한 뒤 이 화면으로 돌아오세요. 주소를 직접 입력할 필요가 없습니다.</p>
+<div class="workspace">
+  <div class="mobile-entry">
+    <button id="pasteAnalyzeButton" class="paste-primary" type="button">복사한 주소로 영상 찾기</button>
+    <p id="pasteHint" class="paste-hint">NJAVTV에서 공유 → 링크 복사 → 이 버튼을 누르세요.</p>
+  </div>
+  <details class="manual-entry"><summary>주소를 직접 입력하기</summary>
+    <form id="analyzeForm" class="urlbox">
+      <input id="pageUrl" type="url" inputmode="url" autocomplete="off" spellcheck="false" aria-label="영상 페이지 주소" placeholder="https://njavtv.com/..." required />
+      <button id="analyzeButton" class="primary" type="submit">영상 찾기</button>
+    </form>
+  </details>
+  <div class="help"><span>DRM이 없는 공개 HLS 영상만 지원합니다. 본인이 소유했거나 저장 권한이 있는 영상에만 사용하세요.</span></div>
+  <div id="status" class="status" aria-live="polite"><div class="statusrow"><div class="spinner" aria-hidden="true"></div><div><strong id="statusTitle">페이지를 분석하고 있습니다</strong><span id="statusText">재생 주소와 화질을 확인합니다.</span></div></div></div>
+  <div id="error" class="error" role="alert"></div>
+  <div id="helperPanel" class="helper-panel" hidden><h3>서버에서 이 영상 페이지를 읽지 못했습니다</h3><p>이 경우에만 고급 추출 기능을 사용할 수 있습니다.</p><button id="copyHelper" type="button">고급 추출 코드 복사</button></div>
+  <div id="result" class="result"><div class="videohead"><h2 id="videoTitle"></h2><span id="videoCode" class="code"></span></div><div id="streams" class="streams"></div><div id="download" class="download"><div class="downloadtop"><strong id="downloadTitle">저장 준비</strong><span id="downloadPercent">0%</span></div><div class="progress"><div id="progressBar" class="bar"></div></div><div id="downloadMessage" class="downloadmsg">목록을 확인하고 있습니다.</div></div></div>
+</div>
+<div class="facts"><div class="fact"><strong>1. 링크 복사</strong><span>삼성 인터넷에서 영상 페이지의 공유 메뉴로 링크를 복사합니다.</span></div><div class="fact"><strong>2. 버튼 한 번</strong><span>다운로더에서 복사한 주소로 영상 찾기를 누릅니다.</span></div><div class="fact"><strong>3. MP4 저장</strong><span>파일 준비가 끝나면 휴대폰에 저장합니다.</span></div></div>
+</section>
+<footer>이 도구는 접근 제한이나 DRM을 우회하지 않습니다. 서비스 약관과 저작권을 준수하세요.</footer>
+</main>
+<script src="./gateway.js?v=single-path-v1"></script><script src="./app.js?v=mobile-entry-v1"></script><script src="./file-job-client.js?v=complete-file-v3"></script>
+</body></html>
