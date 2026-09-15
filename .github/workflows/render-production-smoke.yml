@@ -95,24 +95,45 @@ jobs:
           grep -q 'downloader-worker-brm7.onrender.com' /tmp/gateway.js
 
           status=000
-          for attempt in $(seq 1 60); do
+          worker_sha=''
+          for attempt in $(seq 1 90); do
             status=$(curl -sS --max-time 15 -D /tmp/cors.txt -o /tmp/health.json \
               -H "Origin: $WEB_URL" -w '%{http_code}' "$WORKER_URL/health" || true)
+            worker_sha=$(tr -d '\r' </tmp/cors.txt 2>/dev/null | sed -n 's/^x-worker-git-commit: //Ip' | tail -n 1)
             if [ "$status" = "200" ]; then
-              break
+              if [ "$GITHUB_REF" != 'refs/heads/main' ] || [ "$worker_sha" = "$GITHUB_SHA" ]; then
+                break
+              fi
             fi
-            echo "WORKER_WAKE_WAIT attempt=$attempt status=$status"
+            echo "WORKER_ROLLOUT_WAIT attempt=$attempt status=$status deployed=${worker_sha:-none} expected=$GITHUB_SHA"
             sleep 2
           done
           test "$status" = "200"
           cat /tmp/health.json
           grep -qi '^access-control-allow-origin: https://downloader-web-1gqu.onrender.com' /tmp/cors.txt
+          if [ "$GITHUB_REF" = 'refs/heads/main' ]; then
+            test "$worker_sha" = "$GITHUB_SHA"
+          fi
           python - <<'PY'
           import json
           data=json.load(open('/tmp/health.json'))
           assert data['ok'] is True
           assert data['mode'] == 'native-mobile-stream-v5-files'
           PY
+
+          if [ "$GITHUB_REF" = 'refs/heads/main' ]; then
+            root_status=$(curl -sS --max-time 15 -D /tmp/root-headers.txt -o /tmp/root.json \
+              -H "Origin: $WEB_URL" -w '%{http_code}' "$WORKER_URL/")
+            test "$root_status" = "200"
+            grep -qi "^x-worker-git-commit: $GITHUB_SHA" /tmp/root-headers.txt
+            python - "$GITHUB_SHA" <<'PY'
+          import json, sys
+          data=json.load(open('/tmp/root.json'))
+          assert data['ok'] is True
+          assert data['mode'] == 'native-mobile-stream-v5-files'
+          assert data['gitCommit'] == sys.argv[1]
+          PY
+          fi
 
           status=$(curl -sS --max-time 15 -o /tmp/jobs.json -w '%{http_code}' \
             -H 'content-type: application/json' -H "Origin: $WEB_URL" -d '{}' "$WORKER_URL/jobs")
