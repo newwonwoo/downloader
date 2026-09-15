@@ -25,7 +25,9 @@ jobs:
         with:
           python-version: '3.13'
       - name: Install worker dependencies
-        run: time python -m pip install --only-binary=:all: -r downloader-worker/requirements.txt httpx
+        shell: bash
+        run: |
+          time python -m pip install --only-binary=:all: -r downloader-worker/requirements.txt httpx
       - name: Install bundled ffmpeg binary
         shell: bash
         run: |
