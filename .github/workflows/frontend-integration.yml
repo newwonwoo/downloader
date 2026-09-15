@@ -2,9 +2,9 @@ name: Downloader frontend integration
 on:
   push:
     branches: [main, "feat/**", "fix/**", "perf/**", "test/**"]
-    paths: ["index.html","styles.css","app.js","gateway.js","file-job-client.js","sw.js","test-browser-handoff.mjs",".github/workflows/frontend-integration.yml"]
+    paths: ["index.html","styles.css","app.js","gateway.js","file-job-client.js","sw.js","test-browser-handoff.mjs","test-mobile-entry.mjs",".github/workflows/frontend-integration.yml"]
   pull_request:
-    paths: ["index.html","styles.css","app.js","gateway.js","file-job-client.js","sw.js","test-browser-handoff.mjs",".github/workflows/frontend-integration.yml"]
+    paths: ["index.html","styles.css","app.js","gateway.js","file-job-client.js","sw.js","test-browser-handoff.mjs","test-mobile-entry.mjs",".github/workflows/frontend-integration.yml"]
 permissions: {contents: read}
 jobs:
   frontend:
@@ -20,6 +20,7 @@ jobs:
           node --check gateway.js
           node --check file-job-client.js
           node --check sw.js
+          node test-mobile-entry.mjs
           node test-browser-handoff.mjs
           grep -Fq "FRONTEND_VERSION = 'mobile-entry-v2'" app.js
           grep -Fq 'pasteAnalyzeButton' index.html
