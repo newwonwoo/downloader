@@ -3,6 +3,7 @@ import re
 import select
 import subprocess
 import threading
+import time
 import anyio
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from urllib.parse import quote, urljoin, urlparse
@@ -16,7 +17,7 @@ from fastapi.responses import Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 ALLOWED = ('surrit.com', 'nineyu.com')
-DOWNLOAD_WORKERS = int(os.getenv('DOWNLOAD_WORKERS', '6'))
+DOWNLOAD_WORKERS = max(1, int(os.getenv('DOWNLOAD_WORKERS', '8')))
 UPSTREAM_TIMEOUT = int(os.getenv('UPSTREAM_TIMEOUT', '15'))
 MAX_OBJECT_BYTES = int(os.getenv('MAX_OBJECT_BYTES', str(16 * 1024 * 1024)))
 FIRST_OUTPUT_TIMEOUT = int(os.getenv('FIRST_OUTPUT_TIMEOUT', '20'))
@@ -269,6 +270,28 @@ def wait_future(future, cancel_event):
     raise RuntimeError('download cancelled')
 
 
+def adaptive_worker_count(segment_count, first_fetch_seconds, max_workers=None):
+    """Choose HLS prefetch concurrency from the first real segment latency."""
+    remaining = max(0, int(segment_count) - 1)
+    if remaining <= 0:
+        return 1
+    ceiling = max(1, min(int(max_workers or DOWNLOAD_WORKERS), remaining))
+    if remaining <= 3:
+        return min(2, ceiling)
+    latency = max(0.0, float(first_fetch_seconds))
+    if latency <= 0.35:
+        target = 8
+    elif latency <= 0.8:
+        target = 6
+    elif latency <= 1.5:
+        target = 4
+    else:
+        target = 2
+    if remaining < 12:
+        target = min(target, 4)
+    return max(1, min(target, ceiling))
+
+
 def detect_input_format(init_bytes, first_bytes):
     head = (init_bytes[:128] if init_bytes else b'') + first_bytes[:4096]
     if b'ftyp' in head[:128] or b'moov' in head[:4096] or b'moof' in head[:4096]:
@@ -352,7 +375,9 @@ def prepare_mp4_stream(stream_url, on_progress=None):
         init_bytes = fetch_bytes(init['url'], init.get('range'))
 
     first = segments[0]
+    first_fetch_started = time.monotonic()
     first_bytes = fetch_bytes(first['url'], first.get('range'))
+    first_fetch_seconds = max(0.001, time.monotonic() - first_fetch_started)
     first_bytes = decrypt_segment(
         first_bytes,
         first.get('key'),
@@ -360,10 +385,12 @@ def prepare_mp4_stream(stream_url, on_progress=None):
         key_lock,
         first['seq'],
     )
+    selected_workers = adaptive_worker_count(len(segments), first_fetch_seconds)
 
     input_format = detect_input_format(init_bytes, first_bytes)
     print(
         f'NATIVE_INPUT format={input_format or "auto"} init={len(init_bytes)} first={len(first_bytes)} '
+        f'workers={selected_workers}/{DOWNLOAD_WORKERS} firstFetchMs={round(first_fetch_seconds * 1000)} '
         f'head={(init_bytes or first_bytes)[:16].hex()}',
         flush=True,
     )
@@ -456,7 +483,7 @@ def prepare_mp4_stream(stream_url, on_progress=None):
             if remaining <= 0:
                 return
 
-            workers = max(1, min(DOWNLOAD_WORKERS, remaining))
+            workers = max(1, min(selected_workers, remaining))
             pool = ThreadPoolExecutor(max_workers=workers)
             futures = {}
             next_submit = start
@@ -566,6 +593,7 @@ def health():
         'ok': True,
         'mode': 'native-mobile-stream-v5-files',
         'downloadWorkers': DOWNLOAD_WORKERS,
+        'adaptiveDownloadWorkers': True,
         'maxActiveDownloads': MAX_ACTIVE_DOWNLOADS,
         'fileStorageFreeBytes': __import__('shutil').disk_usage(file_jobs.root).free,
         'fileStorageReserveBytes': file_jobs.FREE_RESERVE,

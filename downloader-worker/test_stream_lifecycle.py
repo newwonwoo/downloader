@@ -45,6 +45,17 @@ class StreamLifecycleTests(unittest.TestCase):
             return proc
         self.enterContext(patch.object(worker.subprocess, 'Popen', side_effect=spawn))
 
+    def test_adaptive_worker_count_tracks_upstream_latency(self):
+        with patch.object(worker, 'DOWNLOAD_WORKERS', 8):
+            self.assertEqual(worker.adaptive_worker_count(20, 0.20), 8)
+            self.assertEqual(worker.adaptive_worker_count(20, 0.60), 6)
+            self.assertEqual(worker.adaptive_worker_count(20, 1.20), 4)
+            self.assertEqual(worker.adaptive_worker_count(20, 2.00), 2)
+            self.assertEqual(worker.adaptive_worker_count(6, 0.20), 4)
+            self.assertEqual(worker.adaptive_worker_count(3, 0.20), 2)
+            self.assertEqual(worker.adaptive_worker_count(1, 0.20), 1)
+            self.assertEqual(worker.adaptive_worker_count(20, 0.20, max_workers=5), 5)
+
     def test_large_error_log_does_not_block_media(self):
         self.fake_ffmpeg(
             "import os; os.write(2, b'error\\n' * 100000); "
