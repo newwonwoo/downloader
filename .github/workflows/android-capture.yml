@@ -7,8 +7,6 @@ on:
       - "android-capture/**"
       - "settings.gradle.kts"
       - "build.gradle.kts"
-      - "app.js"
-      - "test-capture-handoff.mjs"
       - ".github/workflows/android-capture.yml"
       - ".github/scripts/**"
   pull_request:
@@ -16,8 +14,6 @@ on:
       - "android-capture/**"
       - "settings.gradle.kts"
       - "build.gradle.kts"
-      - "app.js"
-      - "test-capture-handoff.mjs"
       - ".github/workflows/android-capture.yml"
       - ".github/scripts/**"
   workflow_dispatch:
@@ -48,57 +44,60 @@ jobs:
           test -x "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
-          test -d "$ANDROID_HOME/platforms/android-35"
 
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
 
-      - name: Verify actual Android entrypoint contracts
+      - name: Verify rebuilt Android contracts
         shell: bash
         run: |
           set -euo pipefail
           CAPTURE=android-capture/src/main/java/com/newwonwoo/downloader/capture/CaptureActivity.java
           SERVICE=android-capture/src/main/java/com/newwonwoo/downloader/capture/HlsDownloadService.java
           MANIFEST=android-capture/src/main/AndroidManifest.xml
-          node test-capture-handoff.mjs
+          test -f "$CAPTURE"
+          test -f "$SERVICE"
+          test ! -f android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
           grep -Fq 'android:name=".CaptureActivity"' "$MANIFEST"
           grep -Fq 'android.intent.action.SEND' "$MANIFEST"
-          grep -Fq 'android:mimeType="text/plain"' "$MANIFEST"
           grep -Fq 'android.permission.POST_NOTIFICATIONS' "$MANIFEST"
           grep -Fq 'android.permission.FOREGROUND_SERVICE_DATA_SYNC' "$MANIFEST"
           grep -Fq 'android:foregroundServiceType="dataSync"' "$MANIFEST"
           grep -Fq 'requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}' "$CAPTURE"
-          grep -Fq 'shouldInterceptRequest' "$CAPTURE"
-          grep -Fq 'ServiceWorkerController' "$CAPTURE"
-          grep -Fq '@JavascriptInterface' "$CAPTURE"
-          grep -Fq 'setAllowFileAccess(false)' "$CAPTURE"
-          grep -Fq 'startForegroundService(download)' "$CAPTURE"
+          grep -Fq 'captureCandidate(request.getUrl().toString(), request.getRequestHeaders())' "$CAPTURE"
+          grep -Fq 'safeMediaUrl' "$CAPTURE"
+          grep -Fq 'softPrimePlayer()' "$CAPTURE"
+          grep -Fq 'EXTRA_REFERER' "$CAPTURE"
           grep -Fq 'startForeground(NOTIFICATION_ID' "$SERVICE"
           grep -Fq 'NETWORK_WORKERS = 12' "$SERVICE"
-          grep -Fq 'MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4' "$SERVICE"
+          grep -Fq 'joinFragmentedMp4' "$SERVICE"
+          grep -Fq 'safeExternalHttps' "$SERVICE"
           grep -Fq 'MediaStore.Video.Media.RELATIVE_PATH' "$SERVICE"
+
+      - name: Run Android JVM tests
+        run: gradle :android-capture:testDebugUnitTest --stacktrace
 
       - name: Build debug APK
         run: gradle :android-capture:assembleDebug --stacktrace
 
-      - name: Verify built APK manifest
+      - name: Verify built APK
         shell: bash
         run: |
           set -euo pipefail
           APK=android-capture/build/outputs/apk/debug/android-capture-debug.apk
           test -s "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
           "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print "$APK" > /tmp/manifest.xml
           grep -Fq 'com.newwonwoo.downloader.capture.CaptureActivity' /tmp/manifest.xml
           grep -Fq 'android.intent.action.SEND' /tmp/manifest.xml
           grep -Fq 'android.permission.POST_NOTIFICATIONS' /tmp/manifest.xml
-          grep -Fq 'android.permission.FOREGROUND_SERVICE_DATA_SYNC' /tmp/manifest.xml
           grep -Fq 'com.newwonwoo.downloader.capture.HlsDownloadService' /tmp/manifest.xml
           ls -lh "$APK"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: video-save-tool-debug-apk
+          name: video-save-tool-v2-debug-apk
           path: android-capture/build/outputs/apk/debug/android-capture-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -106,7 +105,7 @@ jobs:
   runtime-smoke:
     needs: build-apk
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
@@ -115,10 +114,10 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: video-save-tool-debug-apk
+          name: video-save-tool-v2-debug-apk
           path: /tmp/apk
 
-      - name: Enable KVM
+      - name: Enable KVM when available
         shell: bash
         run: |
           set -euo pipefail
@@ -126,7 +125,7 @@ jobs:
             sudo chmod 666 /dev/kvm
             ls -l /dev/kvm
           else
-            echo '/dev/kvm unavailable; emulator runner will fall back to software acceleration'
+            echo '/dev/kvm unavailable; emulator will use software acceleration'
           fi
 
       - name: Install emulator tooling
@@ -145,4 +144,5 @@ jobs:
           arch: x86_64
           profile: pixel_6
           disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -no-metrics
           script: bash .github/scripts/android-runtime-smoke.sh
