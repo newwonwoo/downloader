@@ -142,7 +142,7 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            set -euo pipefail
+            set -eu
             PKG=com.newwonwoo.downloader.capture
             APK=$(find /tmp/apk -name '*.apk' -print -quit)
             test -n "$APK"
