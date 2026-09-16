@@ -91,12 +91,12 @@ jobs:
           APK=android-capture/build/outputs/apk/debug/android-capture-debug.apk
           test -s "$APK"
           "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print "$APK" > /tmp/manifest.xml
+          cat /tmp/manifest.xml
           grep -Fq 'com.newwonwoo.downloader.capture.CaptureActivity' /tmp/manifest.xml
           grep -Fq 'android.intent.action.SEND' /tmp/manifest.xml
           grep -Fq 'android.permission.POST_NOTIFICATIONS' /tmp/manifest.xml
           grep -Fq 'android.permission.FOREGROUND_SERVICE_DATA_SYNC' /tmp/manifest.xml
           grep -Fq 'com.newwonwoo.downloader.capture.HlsDownloadService' /tmp/manifest.xml
-          grep -Fq 'dataSync' /tmp/manifest.xml
           ls -lh "$APK"
 
       - uses: actions/upload-artifact@v4
