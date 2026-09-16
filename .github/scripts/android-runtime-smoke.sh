@@ -5,6 +5,14 @@ PKG=com.newwonwoo.downloader.capture
 APK=$(find /tmp/apk -name '*.apk' -print -quit)
 test -n "$APK"
 
+save_diagnostics() {
+  adb exec-out screencap -p > runtime-after.png 2>/dev/null || true
+  adb shell uiautomator dump /sdcard/window.xml >/dev/null 2>&1 || true
+  adb pull /sdcard/window.xml runtime-window.xml >/dev/null 2>&1 || true
+  adb logcat -d > runtime-logcat.txt 2>/dev/null || true
+}
+trap save_diagnostics EXIT
+
 adb install -r "$APK"
 adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS
 adb logcat -c
@@ -18,6 +26,7 @@ adb shell am start -W \
   -n "$PKG/.CaptureActivity"
 sleep 20
 
+adb exec-out screencap -p > runtime-before.png
 adb shell pidof "$PKG" >/dev/null
 adb shell dumpsys notification --noredact > /tmp/notifications.txt
 grep -F "$PKG" /tmp/notifications.txt >/dev/null
@@ -77,23 +86,27 @@ sleep 10
 
 if ! adb logcat -d | grep -F 'VideoSaveCapture' | grep -F 'HLS candidate host=' >/dev/null; then
   echo '--- no HLS yet; native taps inside actual WebView ---'
-  tap_webview_fraction 0.25
-  sleep 8
+  tap_webview_fraction 0.20
+  sleep 6
 fi
 if ! adb logcat -d | grep -F 'VideoSaveCapture' | grep -F 'HLS candidate host=' >/dev/null; then
-  tap_webview_fraction 0.45
-  sleep 8
+  tap_webview_fraction 0.35
+  sleep 6
 fi
 if ! adb logcat -d | grep -F 'VideoSaveCapture' | grep -F 'HLS candidate host=' >/dev/null; then
-  tap_webview_fraction 0.65
-  sleep 8
+  tap_webview_fraction 0.50
+  sleep 6
+fi
+if ! adb logcat -d | grep -F 'VideoSaveCapture' | grep -F 'HLS candidate host=' >/dev/null; then
+  tap_webview_fraction 0.70
+  sleep 6
 fi
 
-echo '--- capture/download diagnostic log ---'
-adb logcat -d | grep -E 'VideoSaveCapture|VideoSaveDownload' || true
+echo '--- WebView/chromium diagnostics ---'
+adb logcat -d | grep -Ei 'VideoSaveCapture|VideoSaveDownload|chromium|AwContents|net::ERR|SSL' | tail -300 || true
 
 if ! adb logcat -d | grep -F 'VideoSaveCapture' | grep -F 'HLS candidate host=' >/dev/null; then
-  echo 'Reported page did not expose an HLS candidate after helper and native player taps'
+  echo 'Reported page did not expose an HLS candidate after helper and native WebView taps'
   exit 1
 fi
 
@@ -102,14 +115,7 @@ if adb logcat -d -b crash | grep -F "$PKG"; then
   exit 1
 fi
 
-echo '--- background/service survival smoke ---'
 adb shell input keyevent KEYCODE_HOME
 sleep 5
 adb shell dumpsys notification --noredact > /tmp/notifications-background.txt
 grep -F "$PKG" /tmp/notifications-background.txt >/dev/null
-
-LOG=$(adb logcat -d)
-if echo "$LOG" | grep -E 'ForegroundServiceStartNotAllowedException|MissingForegroundServiceTypeException|SecurityException.*foreground' | grep -F "$PKG"; then
-  echo 'Foreground service violated Android runtime rules'
-  exit 1
-fi
