@@ -29,12 +29,26 @@ public class CaptureLogicTest {
     }
 
     @Test
+    public void acceptsExtensionlessManifestHints() {
+        assertEquals(
+                "https://cdn.example.net/api/manifest?token=1",
+                CaptureActivity.safeMediaUrl("https://cdn.example.net/api/manifest?token=1"));
+        assertEquals(
+                "https://cdn.example.net/api/video?id=7&format=hls",
+                CaptureActivity.safeMediaUrl("https://cdn.example.net/api/video?id=7&format=hls"));
+        assertEquals(
+                "https://cdn.example.net/api/playlist?id=7",
+                CaptureActivity.safeMediaUrl("https://cdn.example.net/api/playlist?id=7"));
+    }
+
+    @Test
     public void rejectsUnsafeMediaUrls() {
         assertNull(CaptureActivity.safeMediaUrl("http://cdn.example.net/a.m3u8"));
         assertNull(CaptureActivity.safeMediaUrl("https://127.0.0.1/a.m3u8"));
         assertNull(CaptureActivity.safeMediaUrl("https://192.168.1.5/a.m3u8"));
         assertNull(CaptureActivity.safeMediaUrl("https://user:pass@cdn.example.net/a.m3u8"));
         assertNull(CaptureActivity.safeMediaUrl("https://cdn.example.net/a.mp4"));
+        assertNull(CaptureActivity.safeMediaUrl("https://cdn.example.net/assets/player.js"));
     }
 
     @Test
