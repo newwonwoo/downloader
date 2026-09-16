@@ -3,6 +3,10 @@ package com.newwonwoo.downloader.capture;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -12,6 +16,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.webkit.CookieManager;
@@ -24,65 +29,74 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import java.net.URI;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class CaptureActivity extends Activity {
+    private static final String TAG = "VideoSaveCapture";
     private static final String DOWNLOADER_URL = "https://downloader-web-1gqu.onrender.com/";
     private static final Set<String> SOURCE_HOSTS = Set.of("njavtv.com", "www.njavtv.com");
-    private static final List<String> MEDIA_SUFFIXES = List.of("surrit.com", "nineyu.com");
     private static final Pattern SHARED_URL = Pattern.compile("https://(?:www\\.)?njavtv\\.com/[^\\s<>\\\"']+", Pattern.CASE_INSENSITIVE);
-    private static final Pattern QUALITY = Pattern.compile("/(1920x1080|1280x720|842x480|640x360|1080p|720p|480p|360p)/", Pattern.CASE_INSENSITIVE);
+    private static final Pattern QUALITY = Pattern.compile("(?:/|_|-)(1920x1080|1280x720|842x480|640x360|1080p|720p|480p|360p)(?:/|_|-|\\.|$)", Pattern.CASE_INSENSITIVE);
     private static final long CAPTURE_TIMEOUT_MS = 45_000L;
-    private static final long HANDOFF_DELAY_MS = 1_200L;
+    private static final long HANDOFF_DELAY_MS = 1_800L;
     private static final int NOTIFICATION_PERMISSION_REQUEST = 4108;
+    private static final String ANALYSIS_CHANNEL_ID = "video_analysis";
+    private static final int ANALYSIS_NOTIFICATION_ID = 4106;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Object candidatesLock = new Object();
-    private final LinkedHashSet<String> candidates = new LinkedHashSet<>();
+    private final LinkedHashMap<String, Candidate> candidates = new LinkedHashMap<>();
 
     private WebView webView;
     private TextView statusView;
+    private EditText urlInput;
+    private Button openButton;
     private Button playButton;
     private Button retryButton;
+    private NotificationManager notifications;
     private String pageUrl;
-    private String pendingDirectStream;
+    private Candidate pendingDirectCandidate;
     private boolean handoffScheduled;
     private boolean handedOff;
-    private boolean autoPlayScheduled;
 
     private final Runnable timeoutRunnable = () -> {
         if (handedOff || hasCandidates()) return;
-        setStatus("영상 주소를 아직 찾지 못했습니다. 아래 '영상 재생'을 눌러 주세요.");
+        setStatus("영상 주소를 아직 찾지 못했습니다. 영상 화면에서 재생을 한 번 눌러 주세요.");
         playButton.setVisibility(View.VISIBLE);
         retryButton.setVisibility(View.VISIBLE);
+        updateAnalysisNotification("영상 주소를 찾지 못했습니다 · 앱에서 재생을 눌러 주세요");
     };
 
     private final Runnable handoffRunnable = () -> {
         if (handedOff) return;
-        String stream = bestCandidate();
-        if (stream == null) {
+        Candidate candidate = bestCandidate();
+        if (candidate == null) {
             handoffScheduled = false;
             return;
         }
         handedOff = true;
         mainHandler.removeCallbacks(timeoutRunnable);
-        startDirectDownload(stream);
+        startDirectDownload(candidate);
     };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        notifications = getSystemService(NotificationManager.class);
+        ensureAnalysisChannel();
         buildUi();
         configureWebView();
         handleIntent(getIntent());
@@ -100,21 +114,27 @@ public final class CaptureActivity extends Activity {
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode != NOTIFICATION_PERMISSION_REQUEST) return;
-        String stream = pendingDirectStream;
-        pendingDirectStream = null;
-        if (stream == null) return;
         boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
         if (granted) {
-            startDirectDownloadNow(stream, true);
-        } else {
-            setStatus("알림 권한이 꺼져 있습니다. 다운로드는 시작하지만 진행 상황은 이 화면에서만 확인할 수 있습니다.");
-            startDirectDownloadNow(stream, false);
+            if (pendingDirectCandidate != null) {
+                Candidate candidate = pendingDirectCandidate;
+                pendingDirectCandidate = null;
+                startDirectDownloadNow(candidate, true);
+            } else if (pageUrl != null) {
+                updateAnalysisNotification("영상 주소를 찾는 중입니다");
+            }
+        } else if (pendingDirectCandidate != null) {
+            Candidate candidate = pendingDirectCandidate;
+            pendingDirectCandidate = null;
+            setStatus("알림 권한 없이 다운로드를 시작합니다. 앱을 닫아도 서비스는 계속 시도합니다.");
+            startDirectDownloadNow(candidate, false);
         }
     }
 
     @Override
     protected void onDestroy() {
         mainHandler.removeCallbacksAndMessages(null);
+        if (!handedOff && notifications != null) notifications.cancel(ANALYSIS_NOTIFICATION_ID);
         if (webView != null) {
             webView.removeJavascriptInterface("CaptureBridge");
             webView.stopLoading();
@@ -131,11 +151,28 @@ public final class CaptureActivity extends Activity {
         statusView = new TextView(this);
         statusView.setTextSize(16f);
         statusView.setTextColor(Color.rgb(30, 30, 30));
-        statusView.setPadding(dp(16), dp(14), dp(16), dp(14));
+        statusView.setPadding(dp(16), dp(14), dp(16), dp(10));
         statusView.setGravity(Gravity.CENTER_VERTICAL);
         root.addView(statusView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout addressRow = new LinearLayout(this);
+        addressRow.setOrientation(LinearLayout.HORIZONTAL);
+        addressRow.setPadding(dp(12), 0, dp(12), dp(8));
+
+        urlInput = new EditText(this);
+        urlInput.setSingleLine(true);
+        urlInput.setHint("https://njavtv.com/...");
+        addressRow.addView(urlInput, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        openButton = new Button(this);
+        openButton.setText("주소 열기");
+        openButton.setOnClickListener(v -> openTypedUrl());
+        addressRow.addView(openButton, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        root.addView(addressRow);
 
         LinearLayout actions = new LinearLayout(this);
         actions.setOrientation(LinearLayout.HORIZONTAL);
@@ -144,7 +181,7 @@ public final class CaptureActivity extends Activity {
         playButton = new Button(this);
         playButton.setText("영상 재생");
         playButton.setVisibility(View.GONE);
-        playButton.setOnClickListener(v -> triggerPlayback(true));
+        playButton.setOnClickListener(v -> triggerPlayback());
         actions.addView(playButton, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
 
         retryButton = new Button(this);
@@ -152,12 +189,10 @@ public final class CaptureActivity extends Activity {
         retryButton.setVisibility(View.GONE);
         retryButton.setOnClickListener(v -> retryCapture());
         actions.addView(retryButton, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-
-        root.addView(actions, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT));
+        root.addView(actions);
 
         webView = new WebView(this);
+        webView.setKeepScreenOn(true);
         root.addView(webView, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
@@ -185,7 +220,9 @@ public final class CaptureActivity extends Activity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                if (request != null && request.getUrl() != null) captureCandidate(request.getUrl().toString());
+                if (request != null && request.getUrl() != null) {
+                    captureCandidate(request.getUrl().toString(), request.getRequestHeaders());
+                }
                 return null;
             }
 
@@ -199,23 +236,36 @@ public final class CaptureActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 injectCaptureBridge();
+                softPrimePlayer();
                 String title = safeTitle();
                 if (looksLikeChallenge(title, url)) {
-                    setStatus("보안 확인이 보이면 완료해 주세요. 완료 후 자동으로 영상을 찾습니다.");
+                    setStatus("보안 확인이 보이면 완료해 주세요. 완료 후 자동으로 다시 찾습니다.");
                     playButton.setVisibility(View.VISIBLE);
                     return;
                 }
                 if (!hasCandidates()) {
-                    setStatus("영상 주소를 찾는 중입니다. 자동 재생도 시도합니다…");
+                    setStatus("영상 플레이어의 재생 주소를 찾는 중입니다…");
                     playButton.setVisibility(View.VISIBLE);
-                    scheduleAutoPlayback();
+                    mainHandler.postDelayed(CaptureActivity.this::softPrimePlayer, 2_000L);
+                    mainHandler.postDelayed(CaptureActivity.this::injectCaptureBridge, 4_000L);
                 }
             }
 
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, android.webkit.WebResourceError error) {
                 if (request != null && request.isForMainFrame() && !handedOff) {
-                    setStatus("페이지를 열지 못했습니다. 다시 시도해 주세요.");
+                    mainHandler.removeCallbacks(timeoutRunnable);
+                    String reason = "연결 오류";
+                    int code = 0;
+                    if (error != null) {
+                        code = error.getErrorCode();
+                        CharSequence description = error.getDescription();
+                        if (description != null && !description.toString().isBlank()) reason = description.toString().trim();
+                    }
+                    Log.w(TAG, "main frame load failed code=" + code + " reason=" + reason);
+                    setStatus("페이지를 열지 못했습니다 (" + reason + "). 네트워크/DNS를 확인한 뒤 다시 시도해 주세요.");
+                    updateAnalysisNotification("페이지 연결 실패 · " + reason);
+                    playButton.setVisibility(View.GONE);
                     retryButton.setVisibility(View.VISIBLE);
                 }
             }
@@ -225,25 +275,46 @@ public final class CaptureActivity extends Activity {
             ServiceWorkerController.getInstance().setServiceWorkerClient(new ServiceWorkerClient() {
                 @Override
                 public WebResourceResponse shouldInterceptRequest(WebResourceRequest request) {
-                    if (request != null && request.getUrl() != null) captureCandidate(request.getUrl().toString());
+                    if (request != null && request.getUrl() != null) {
+                        captureCandidate(request.getUrl().toString(), request.getRequestHeaders());
+                    }
                     return null;
                 }
             });
         } catch (Throwable ignored) {
-            // WebView interception and JS observation remain active.
+            // Normal request interception and JavaScript observation remain active.
         }
     }
 
     private void handleIntent(Intent intent) {
         String source = extractSourceUrl(extractSharedText(intent));
         if (source == null) {
-            setStatus("NJAVTV 영상에서 공유 → 영상 저장 도구를 선택해 주세요.");
+            setStatus("NJAVTV 주소를 붙여넣거나, 삼성 인터넷에서 공유 → 영상 저장 도구를 선택해 주세요.");
+            urlInput.setVisibility(View.VISIBLE);
+            openButton.setVisibility(View.VISIBLE);
             playButton.setVisibility(View.GONE);
             retryButton.setVisibility(View.GONE);
             return;
         }
+        loadSource(source);
+    }
+
+    private void openTypedUrl() {
+        String source = extractSourceUrl(urlInput.getText() == null ? "" : urlInput.getText().toString());
+        if (source == null) {
+            setStatus("지원하는 NJAVTV https 주소를 입력해 주세요.");
+            return;
+        }
+        resetCapture();
+        loadSource(source);
+    }
+
+    private void loadSource(String source) {
         pageUrl = source;
+        urlInput.setText(source);
         setStatus("공유된 영상을 확인하고 있습니다…");
+        requestNotificationPermissionForStatus();
+        updateAnalysisNotification("영상 주소를 찾는 중입니다");
         mainHandler.removeCallbacks(timeoutRunnable);
         mainHandler.postDelayed(timeoutRunnable, CAPTURE_TIMEOUT_MS);
         webView.loadUrl(pageUrl);
@@ -286,44 +357,66 @@ public final class CaptureActivity extends Activity {
             return "https".equalsIgnoreCase(uri.getScheme())
                     && host != null
                     && SOURCE_HOSTS.contains(host.toLowerCase(Locale.ROOT))
-                    && uri.getRawUserInfo() == null;
+                    && uri.getRawUserInfo() == null
+                    && (uri.getPort() == -1 || uri.getPort() == 443);
         } catch (RuntimeException ignored) {
             return false;
         }
     }
 
-    static String allowedMedia(String raw) {
+    static String safeMediaUrl(String raw) {
+        if (raw == null || raw.isBlank()) return null;
         try {
-            URI uri = URI.create(raw);
+            URI uri = URI.create(raw.trim());
             String host = uri.getHost();
             String path = uri.getPath();
-            if (!"https".equalsIgnoreCase(uri.getScheme()) || host == null || path == null || uri.getRawUserInfo() != null) return null;
-            String normalizedHost = host.toLowerCase(Locale.ROOT);
-            boolean hostAllowed = false;
-            for (String suffix : MEDIA_SUFFIXES) {
-                if (normalizedHost.equals(suffix) || normalizedHost.endsWith("." + suffix)) {
-                    hostAllowed = true;
-                    break;
-                }
-            }
-            if (!hostAllowed || !path.toLowerCase(Locale.ROOT).endsWith(".m3u8")) return null;
+            if (!"https".equalsIgnoreCase(uri.getScheme()) || host == null || path == null) return null;
+            if (uri.getRawUserInfo() != null || (uri.getPort() != -1 && uri.getPort() != 443)) return null;
+            if (isLocalOrPrivateHost(host)) return null;
+
+            String pathLower = path.toLowerCase(Locale.ROOT);
+            String queryLower = uri.getRawQuery() == null ? "" : uri.getRawQuery().toLowerCase(Locale.ROOT);
+            boolean manifestHint = pathLower.endsWith(".m3u8")
+                    || pathLower.contains("manifest")
+                    || pathLower.contains("playlist")
+                    || pathLower.contains("master");
+            boolean queryHint = queryLower.contains("m3u8")
+                    || queryLower.contains("format=hls")
+                    || queryLower.contains("type=hls")
+                    || queryLower.contains("manifest=hls");
+            if (!manifestHint && !queryHint) return null;
             return uri.toString();
         } catch (RuntimeException ignored) {
             return null;
         }
     }
 
-    private void captureCandidate(String raw) {
-        String accepted = allowedMedia(raw);
+    static boolean isLocalOrPrivateHost(String host) {
+        if (host == null) return true;
+        String h = host.toLowerCase(Locale.ROOT);
+        if (h.equals("localhost") || h.equals("::1") || h.equals("0.0.0.0") || h.endsWith(".local")) return true;
+        if (h.matches("^127\\.\\d+\\.\\d+\\.\\d+$")) return true;
+        if (h.matches("^10\\.\\d+\\.\\d+\\.\\d+$")) return true;
+        if (h.matches("^192\\.168\\.\\d+\\.\\d+$")) return true;
+        Matcher m = Pattern.compile("^172\\.(\\d+)\\.\\d+\\.\\d+$").matcher(h);
+        return m.matches() && Integer.parseInt(m.group(1)) >= 16 && Integer.parseInt(m.group(1)) <= 31;
+    }
+
+    private void captureCandidate(String raw, Map<String, String> requestHeaders) {
+        String accepted = safeMediaUrl(raw);
         if (accepted == null || handedOff) return;
-        boolean added;
+        Candidate candidate = Candidate.from(accepted, requestHeaders);
         synchronized (candidatesLock) {
-            if (candidates.size() >= 16 || candidates.contains(accepted)) return;
-            added = candidates.add(accepted);
+            if (candidates.containsKey(accepted)) return;
+            if (candidates.size() >= 24) return;
+            candidates.put(accepted, candidate);
         }
-        if (!added) return;
+        try {
+            Log.i(TAG, "HLS candidate host=" + URI.create(accepted).getHost());
+        } catch (RuntimeException ignored) {}
         mainHandler.post(() -> {
-            setStatus("영상 주소를 찾았습니다. 직접 다운로드를 준비합니다…");
+            setStatus("영상 주소를 찾았습니다. 가장 좋은 화질을 확인하고 있습니다…");
+            updateAnalysisNotification("영상 주소를 찾았습니다 · 다운로드 준비 중");
             playButton.setVisibility(View.GONE);
             retryButton.setVisibility(View.GONE);
             if (!handoffScheduled) {
@@ -334,16 +427,20 @@ public final class CaptureActivity extends Activity {
     }
 
     private boolean hasCandidates() {
-        synchronized (candidatesLock) { return !candidates.isEmpty(); }
+        synchronized (candidatesLock) {
+            return !candidates.isEmpty();
+        }
     }
 
-    private String bestCandidate() {
-        List<String> snapshot;
-        synchronized (candidatesLock) { snapshot = new ArrayList<>(candidates); }
-        String best = null;
+    private Candidate bestCandidate() {
+        List<Candidate> snapshot;
+        synchronized (candidatesLock) {
+            snapshot = new ArrayList<>(candidates.values());
+        }
+        Candidate best = null;
         int bestScore = Integer.MIN_VALUE;
-        for (String value : snapshot) {
-            int score = qualityScore(value);
+        for (Candidate value : snapshot) {
+            int score = qualityScore(value.url);
             if (best == null || score > bestScore) {
                 best = value;
                 bestScore = score;
@@ -352,47 +449,47 @@ public final class CaptureActivity extends Activity {
         return best;
     }
 
-    private static int qualityScore(String value) {
+    static int qualityScore(String value) {
         Matcher matcher = QUALITY.matcher(value == null ? "" : value);
-        if (!matcher.find()) return 1;
+        if (!matcher.find()) return 10;
         return switch (matcher.group(1).toLowerCase(Locale.ROOT)) {
             case "1920x1080", "1080p" -> 1080;
             case "1280x720", "720p" -> 720;
             case "842x480", "480p" -> 480;
             case "640x360", "360p" -> 360;
-            default -> 1;
+            default -> 10;
         };
     }
 
     private void injectCaptureBridge() {
         String script = "(function(){"
-                + "if(window.__captureV2)return;window.__captureV2=true;"
+                + "if(window.__videoSaveCaptureV4)return;window.__videoSaveCaptureV4=true;"
                 + "var send=function(v){try{if(v)CaptureBridge.candidate(String(v));}catch(e){}};"
-                + "var of=window.fetch;if(of){window.fetch=function(i,o){try{send(typeof i==='string'?i:(i&&i.url));}catch(e){}return of.apply(this,arguments);};}"
-                + "var xo=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){send(u);return xo.apply(this,arguments);};"
-                + "var scan=function(){try{document.querySelectorAll('video,source').forEach(function(v){send(v.currentSrc);send(v.src);});performance.getEntriesByType('resource').forEach(function(e){send(e.name);});}catch(e){}};"
-                + "scan();setInterval(scan,700);"
+                + "var hook=function(w){try{"
+                + "var f=w.fetch;if(f){w.fetch=function(i,o){try{send(typeof i==='string'?i:(i&&i.url));}catch(e){}return f.apply(this,arguments);};}"
+                + "var xo=w.XMLHttpRequest&&w.XMLHttpRequest.prototype.open;if(xo){w.XMLHttpRequest.prototype.open=function(m,u){send(u);return xo.apply(this,arguments);};}"
+                + "}catch(e){}};"
+                + "var scanWindow=function(w){try{hook(w);if(w.hls&&w.hls.url)send(w.hls.url);if(w.player&&w.player.hls&&w.player.hls.url)send(w.player.hls.url);"
+                + "var vs=w.document&&w.document.querySelectorAll?w.document.querySelectorAll('video,source'):[];vs.forEach(function(v){send(v.currentSrc);send(v.src);try{if(v._hls&&v._hls.url)send(v._hls.url);}catch(e){}});}catch(e){}};"
+                + "var scan=function(){try{scanWindow(window);document.querySelectorAll('iframe').forEach(function(f){try{scanWindow(f.contentWindow);}catch(e){}});performance.getEntriesByType('resource').forEach(function(e){send(e.name);});}catch(e){}};"
+                + "scan();setInterval(scan,500);"
                 + "})();";
         webView.evaluateJavascript(script, null);
     }
 
-    private void scheduleAutoPlayback() {
-        if (autoPlayScheduled) return;
-        autoPlayScheduled = true;
-        long[] delays = {500L, 2_000L, 5_000L, 10_000L};
-        for (long delay : delays) {
-            mainHandler.postDelayed(() -> {
-                if (!handedOff && !hasCandidates()) triggerPlayback(false);
-            }, delay);
-        }
+    private void softPrimePlayer() {
+        if (handedOff || hasCandidates()) return;
+        String js = "(function(){try{var v=document.querySelector('video');if(!v)return false;v.muted=true;v.playsInline=true;var p=v.play();if(p&&p.catch)p.catch(function(){});return true;}catch(e){return false;}})()";
+        webView.evaluateJavascript(js, null);
+        injectCaptureBridge();
     }
 
-    private void triggerPlayback(boolean userInitiated) {
-        if (userInitiated) setStatus("영상을 재생하면서 주소를 찾고 있습니다…");
+    private void triggerPlayback() {
+        setStatus("영상을 재생하면서 주소를 찾고 있습니다…");
         String js = "(function(){try{"
-                + "var v=document.querySelector('video');if(v){v.muted=true;v.playsInline=true;var p=v.play();if(p&&p.catch)p.catch(function(){});v.click();}"
+                + "var v=document.querySelector('video');if(v){v.muted=true;v.playsInline=true;var p=v.play();if(p&&p.catch)p.catch(function(){});}"
                 + "var sels=['.vjs-big-play-button','.plyr__control--overlaid','button[aria-label*=Play]','button[title*=Play]'];"
-                + "for(var i=0;i<sels.length;i++){var b=document.querySelector(sels[i]);if(b){try{b.click();}catch(e){}}}"
+                + "for(var i=0;i<sels.length;i++){var b=document.querySelector(sels[i]);if(b){try{b.click();break;}catch(e){}}}"
                 + "return !!v;}catch(e){return false;}})()";
         webView.evaluateJavascript(js, null);
         injectCaptureBridge();
@@ -402,6 +499,7 @@ public final class CaptureActivity extends Activity {
         if (pageUrl == null) return;
         resetCapture();
         setStatus("다시 확인하고 있습니다…");
+        updateAnalysisNotification("영상 주소를 다시 찾는 중입니다");
         mainHandler.postDelayed(timeoutRunnable, CAPTURE_TIMEOUT_MS);
         webView.reload();
     }
@@ -409,11 +507,12 @@ public final class CaptureActivity extends Activity {
     private void resetCapture() {
         mainHandler.removeCallbacks(timeoutRunnable);
         mainHandler.removeCallbacks(handoffRunnable);
-        synchronized (candidatesLock) { candidates.clear(); }
-        pendingDirectStream = null;
+        synchronized (candidatesLock) {
+            candidates.clear();
+        }
+        pendingDirectCandidate = null;
         handoffScheduled = false;
         handedOff = false;
-        autoPlayScheduled = false;
     }
 
     private boolean notificationPermissionGranted() {
@@ -421,44 +520,50 @@ public final class CaptureActivity extends Activity {
                 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
     }
 
-    private void startDirectDownload(String stream) {
+    private void requestNotificationPermissionForStatus() {
+        if (notificationPermissionGranted()) return;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_REQUEST);
+        }
+    }
+
+    private void startDirectDownload(Candidate candidate) {
         if (!notificationPermissionGranted()) {
-            pendingDirectStream = stream;
+            pendingDirectCandidate = candidate;
             setStatus("다운로드 진행률을 표시하려면 알림 권한을 허용해 주세요.");
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_REQUEST);
                 return;
             }
         }
-        startDirectDownloadNow(stream, true);
+        startDirectDownloadNow(candidate, true);
     }
 
-    private void startDirectDownloadNow(String stream, boolean canLeaveScreen) {
+    private void startDirectDownloadNow(Candidate candidate, boolean canLeaveScreen) {
         String title = safeTitle();
-        String cookie = CookieManager.getInstance().getCookie(stream);
+        String cookie = CookieManager.getInstance().getCookie(candidate.url);
         Intent download = new Intent(this, HlsDownloadService.class)
-                .putExtra(HlsDownloadService.EXTRA_STREAM, stream)
+                .putExtra(HlsDownloadService.EXTRA_STREAM, candidate.url)
                 .putExtra(HlsDownloadService.EXTRA_PAGE, pageUrl == null ? "" : pageUrl)
                 .putExtra(HlsDownloadService.EXTRA_TITLE, title)
-                .putExtra(HlsDownloadService.EXTRA_COOKIE, cookie == null ? "" : cookie);
+                .putExtra(HlsDownloadService.EXTRA_COOKIE, cookie == null ? "" : cookie)
+                .putExtra(HlsDownloadService.EXTRA_REFERER, candidate.referer)
+                .putExtra(HlsDownloadService.EXTRA_ORIGIN, candidate.origin)
+                .putExtra(HlsDownloadService.EXTRA_USER_AGENT, candidate.userAgent);
         try {
+            notifications.cancel(ANALYSIS_NOTIFICATION_ID);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(download);
             else startService(download);
             CookieManager.getInstance().flush();
-            playButton.setVisibility(View.GONE);
-            retryButton.setVisibility(View.GONE);
-            if (canLeaveScreen) {
-                setStatus("직접 다운로드를 시작했습니다. 상태 표시줄 알림에서 진행률을 확인할 수 있습니다.");
-                Toast.makeText(this, "다운로드 시작 · 다른 화면으로 이동해도 계속됩니다.", Toast.LENGTH_LONG).show();
-                mainHandler.postDelayed(this::finish, 1_800L);
-            } else {
-                setStatus("직접 다운로드를 시작했습니다. 알림 권한이 없어 이 화면을 열어 두는 것을 권장합니다.");
-            }
+            setStatus("다운로드 작업을 넘겼습니다. 스트림 연결을 확인한 뒤 진행률이 표시됩니다.");
+            Toast.makeText(this, "다운로드 준비 시작", Toast.LENGTH_LONG).show();
+            if (canLeaveScreen) mainHandler.postDelayed(this::finish, 1_500L);
         } catch (RuntimeException error) {
+            Log.e(TAG, "direct service start failed", error);
             handedOff = false;
             handoffScheduled = false;
-            setStatus("휴대폰 직접 다운로드를 시작하지 못해 서버 방식으로 전환합니다…");
-            openDownloader(stream);
+            setStatus("휴대폰 다운로드를 시작하지 못해 서버 방식으로 전환합니다…");
+            openDownloader(candidate.url);
         }
     }
 
@@ -482,6 +587,33 @@ public final class CaptureActivity extends Activity {
         }
     }
 
+    private void ensureAnalysisChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    ANALYSIS_CHANNEL_ID,
+                    "영상 분석",
+                    NotificationManager.IMPORTANCE_LOW);
+            channel.setDescription("영상 주소를 찾는 진행 상태");
+            notifications.createNotificationChannel(channel);
+        }
+    }
+
+    private void updateAnalysisNotification(String text) {
+        if (!notificationPermissionGranted() || notifications == null) return;
+        Intent open = new Intent(this, CaptureActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        PendingIntent content = PendingIntent.getActivity(this, 4106, open,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Notification notification = new Notification.Builder(this, ANALYSIS_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_download)
+                .setContentTitle("영상 저장 도구")
+                .setContentText(text)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setContentIntent(content)
+                .build();
+        notifications.notify(ANALYSIS_NOTIFICATION_ID, notification);
+    }
+
     private String safeTitle() {
         String title = webView.getTitle();
         if (title == null || title.isBlank()) return "NJAVTV 영상";
@@ -494,9 +626,15 @@ public final class CaptureActivity extends Activity {
         return value.contains("잠시만") || value.contains("just a moment") || value.contains("challenge") || value.contains("verify");
     }
 
+    private static String buildIdentity() {
+        return "v" + BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ") · "
+                + BuildConfig.BUILD_SHA + " · " + (BuildConfig.DEBUG ? "dev" : "release");
+    }
+
     private void setStatus(String message) {
-        if (Looper.myLooper() == Looper.getMainLooper()) statusView.setText(message);
-        else mainHandler.post(() -> statusView.setText(message));
+        String display = message + "\n" + buildIdentity();
+        if (Looper.myLooper() == Looper.getMainLooper()) statusView.setText(display);
+        else mainHandler.post(() -> statusView.setText(display));
     }
 
     private int dp(int value) {
@@ -505,6 +643,27 @@ public final class CaptureActivity extends Activity {
 
     private final class CaptureBridge {
         @JavascriptInterface
-        public void candidate(String value) { captureCandidate(value); }
+        public void candidate(String value) {
+            captureCandidate(value, Map.of());
+        }
+    }
+
+    private record Candidate(String url, String referer, String origin, String userAgent) {
+        static Candidate from(String url, Map<String, String> headers) {
+            String referer = header(headers, "Referer");
+            String origin = header(headers, "Origin");
+            String userAgent = header(headers, "User-Agent");
+            return new Candidate(url, referer, origin, userAgent);
+        }
+
+        private static String header(Map<String, String> headers, String name) {
+            if (headers == null) return "";
+            for (Map.Entry<String, String> entry : headers.entrySet()) {
+                if (entry.getKey() != null && entry.getKey().equalsIgnoreCase(name)) {
+                    return entry.getValue() == null ? "" : entry.getValue();
+                }
+            }
+            return "";
+        }
     }
 }
