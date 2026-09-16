@@ -14,7 +14,7 @@
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
         <activity
-            android:name=".MainActivity"
+            android:name=".CaptureActivity"
             android:exported="true"
             android:launchMode="singleTop">
             <intent-filter>
