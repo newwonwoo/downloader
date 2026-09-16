@@ -1,5 +1,16 @@
+import java.util.Base64
+
 plugins {
     id("com.android.application")
+}
+
+val buildSha = (System.getenv("GITHUB_SHA") ?: "local").take(8)
+val devKeystoreSource = file("dev-signing-keystore.b64")
+val devKeystoreFile = layout.buildDirectory.file("signing/video-save-dev.jks").get().asFile
+
+if (devKeystoreSource.isFile) {
+    devKeystoreFile.parentFile.mkdirs()
+    devKeystoreFile.writeBytes(Base64.getMimeDecoder().decode(devKeystoreSource.readText()))
 }
 
 android {
@@ -12,9 +23,26 @@ android {
         targetSdk = 35
         versionCode = 4
         versionName = "2.0"
+        buildConfigField("String", "BUILD_SHA", "\"$buildSha\"")
+    }
+
+    buildFeatures {
+        buildConfig = true
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            storeFile = devKeystoreFile
+            storePassword = "android"
+            keyAlias = "videosave-dev"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
