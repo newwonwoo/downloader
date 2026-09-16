@@ -52,8 +52,11 @@ jobs:
           CAPTURE=android-capture/src/main/java/com/newwonwoo/downloader/capture/CaptureActivity.java
           SERVICE=android-capture/src/main/java/com/newwonwoo/downloader/capture/HlsDownloadService.java
           MANIFEST=android-capture/src/main/AndroidManifest.xml
+          GRADLE=android-capture/build.gradle.kts
+          DEV_KEY=android-capture/dev-signing-keystore.b64
           test -f "$CAPTURE"
           test -f "$SERVICE"
+          test -s "$DEV_KEY"
           test ! -f android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
           grep -Fq 'android:name=".CaptureActivity"' "$MANIFEST"
           grep -Fq 'android.intent.action.SEND' "$MANIFEST"
@@ -62,14 +65,22 @@ jobs:
           grep -Fq 'android:foregroundServiceType="dataSync"' "$MANIFEST"
           grep -Fq 'requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}' "$CAPTURE"
           grep -Fq 'captureCandidate(request.getUrl().toString(), request.getRequestHeaders())' "$CAPTURE"
-          grep -Fq 'safeMediaUrl' "$CAPTURE"
+          grep -Fq 'main frame load failed code=' "$CAPTURE"
+          grep -Fq 'BuildConfig.BUILD_SHA' "$CAPTURE"
+          grep -Fq 'format=hls' "$CAPTURE"
           grep -Fq 'softPrimePlayer()' "$CAPTURE"
           grep -Fq 'EXTRA_REFERER' "$CAPTURE"
           grep -Fq 'startForeground(NOTIFICATION_ID' "$SERVICE"
+          grep -Fq 'START_REDELIVER_INTENT' "$SERVICE"
+          grep -Fq 'stream validated segments=' "$SERVICE"
           grep -Fq 'NETWORK_WORKERS = 12' "$SERVICE"
           grep -Fq 'joinFragmentedMp4' "$SERVICE"
           grep -Fq 'safeExternalHttps' "$SERVICE"
           grep -Fq 'MediaStore.Video.Media.RELATIVE_PATH' "$SERVICE"
+          grep -Fq 'buildConfigField("String", "BUILD_SHA"' "$GRADLE"
+          grep -Fq 'dev-signing-keystore.b64' "$GRADLE"
+          base64 -d "$DEV_KEY" > /tmp/video-save-dev.jks
+          keytool -list -keystore /tmp/video-save-dev.jks -storepass android -alias videosave-dev >/dev/null
       - name: Run Android JVM tests
         run: gradle :android-capture:testDebugUnitTest --stacktrace
       - name: Build debug APK
@@ -80,7 +91,9 @@ jobs:
           set -euo pipefail
           APK=android-capture/build/outputs/apk/debug/android-capture-debug.apk
           test -s "$APK"
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK" | tee /tmp/certs.txt
+          NORMALIZED_CERT=$(tr '[:upper:]' '[:lower:]' < /tmp/certs.txt | tr -d ':')
+          grep -Fq 'bfe7c62d3af441810c0a42d09af4b70b606a9722fe27b631e5904721d569aa4d' <<<"$NORMALIZED_CERT"
           "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print "$APK" > /tmp/manifest.xml
           grep -Fq 'com.newwonwoo.downloader.capture.CaptureActivity' /tmp/manifest.xml
           grep -Fq 'android.intent.action.SEND' /tmp/manifest.xml
@@ -132,7 +145,7 @@ jobs:
           arch: x86_64
           profile: pixel_6
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -no-metrics -dns-server 1.1.1.1,8.8.8.8
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -no-metrics
           script: bash .github/scripts/android-runtime-smoke.sh
       - name: Upload runtime diagnostics
         if: always()
