@@ -10,8 +10,8 @@ android {
         applicationId = "com.newwonwoo.downloader.capture"
         minSdk = 24
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "2.0"
     }
 
     buildTypes {
@@ -28,4 +28,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+}
+
+dependencies {
+    testImplementation("junit:junit:4.13.2")
 }
