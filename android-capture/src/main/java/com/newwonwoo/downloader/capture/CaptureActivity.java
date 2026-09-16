@@ -59,7 +59,6 @@ public final class CaptureActivity extends Activity {
     private String pendingDirectStream;
     private boolean handoffScheduled;
     private boolean handedOff;
-    private boolean autoPlayScheduled;
 
     private final Runnable timeoutRunnable = () -> {
         if (handedOff || hasCandidates()) return;
@@ -206,9 +205,8 @@ public final class CaptureActivity extends Activity {
                     return;
                 }
                 if (!hasCandidates()) {
-                    setStatus("영상 주소를 찾는 중입니다. 자동 재생도 시도합니다…");
+                    setStatus("영상 플레이어에서 주소를 확인 중입니다…");
                     playButton.setVisibility(View.VISIBLE);
-                    scheduleAutoPlayback();
                 }
             }
 
@@ -366,25 +364,15 @@ public final class CaptureActivity extends Activity {
 
     private void injectCaptureBridge() {
         String script = "(function(){"
-                + "if(window.__captureV2)return;window.__captureV2=true;"
+                + "if(window.__captureV3)return;window.__captureV3=true;"
                 + "var send=function(v){try{if(v)CaptureBridge.candidate(String(v));}catch(e){}};"
                 + "var of=window.fetch;if(of){window.fetch=function(i,o){try{send(typeof i==='string'?i:(i&&i.url));}catch(e){}return of.apply(this,arguments);};}"
                 + "var xo=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){send(u);return xo.apply(this,arguments);};"
-                + "var scan=function(){try{document.querySelectorAll('video,source').forEach(function(v){send(v.currentSrc);send(v.src);});performance.getEntriesByType('resource').forEach(function(e){send(e.name);});}catch(e){}};"
-                + "scan();setInterval(scan,700);"
+                + "var scanWindow=function(w){try{if(w&&w.hls&&w.hls.url)send(w.hls.url);var vs=w.document&&w.document.querySelectorAll?w.document.querySelectorAll('video,source'):[];vs.forEach(function(v){send(v.currentSrc);send(v.src);try{if(v._hls&&v._hls.url)send(v._hls.url);}catch(e){}});}catch(e){}};"
+                + "var scan=function(){try{scanWindow(window);document.querySelectorAll('iframe').forEach(function(f){try{scanWindow(f.contentWindow);}catch(e){}});performance.getEntriesByType('resource').forEach(function(e){send(e.name);});}catch(e){}};"
+                + "scan();setInterval(scan,500);"
                 + "})();";
         webView.evaluateJavascript(script, null);
-    }
-
-    private void scheduleAutoPlayback() {
-        if (autoPlayScheduled) return;
-        autoPlayScheduled = true;
-        long[] delays = {500L, 2_000L, 5_000L, 10_000L};
-        for (long delay : delays) {
-            mainHandler.postDelayed(() -> {
-                if (!handedOff && !hasCandidates()) triggerPlayback(false);
-            }, delay);
-        }
     }
 
     private void triggerPlayback(boolean userInitiated) {
@@ -413,7 +401,6 @@ public final class CaptureActivity extends Activity {
         pendingDirectStream = null;
         handoffScheduled = false;
         handedOff = false;
-        autoPlayScheduled = false;
     }
 
     private boolean notificationPermissionGranted() {
