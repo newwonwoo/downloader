@@ -2,7 +2,7 @@ name: Android capture APK
 
 on:
   push:
-    branches: [main, "feat/**", "ci/**", "fix/**", "perf/**"]
+    branches: [main, "feat/**", "ci/**", "fix/**", "perf/**", "test/**"]
     paths:
       - "android-capture/**"
       - "settings.gradle.kts"
@@ -26,7 +26,7 @@ permissions:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
@@ -45,42 +45,59 @@ jobs:
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           test -x "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" "platform-tools"
           test -d "$ANDROID_HOME/platforms/android-35"
 
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
 
-      - name: Verify capture contracts
+      - name: Verify source contracts
         shell: bash
         run: |
           set -euo pipefail
+          CAPTURE=android-capture/src/main/java/com/newwonwoo/downloader/capture/CaptureActivity.java
+          SERVICE=android-capture/src/main/java/com/newwonwoo/downloader/capture/HlsDownloadService.java
+          MANIFEST=android-capture/src/main/AndroidManifest.xml
           node test-capture-handoff.mjs
-          grep -Fq 'android.intent.action.SEND' android-capture/src/main/AndroidManifest.xml
-          grep -Fq 'android:mimeType="text/plain"' android-capture/src/main/AndroidManifest.xml
-          grep -Fq 'android.permission.FOREGROUND_SERVICE_DATA_SYNC' android-capture/src/main/AndroidManifest.xml
-          grep -Fq 'android:foregroundServiceType="dataSync"' android-capture/src/main/AndroidManifest.xml
-          grep -Fq 'shouldInterceptRequest' android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
-          grep -Fq 'ServiceWorkerController' android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
-          grep -Fq '@JavascriptInterface' android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
-          grep -Fq 'setAllowFileAccess(false)' android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
-          grep -Fq 'startForegroundService(download)' android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
-          grep -Fq 'NETWORK_WORKERS = 12' android-capture/src/main/java/com/newwonwoo/downloader/capture/HlsDownloadService.java
-          grep -Fq 'MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4' android-capture/src/main/java/com/newwonwoo/downloader/capture/HlsDownloadService.java
-          grep -Fq 'MediaStore.Video.Media.RELATIVE_PATH' android-capture/src/main/java/com/newwonwoo/downloader/capture/HlsDownloadService.java
-          grep -Fq 'appendQueryParameter("capture", "1")' android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
-          grep -Fq 'appendQueryParameter("stream", stream)' android-capture/src/main/java/com/newwonwoo/downloader/capture/MainActivity.java
+          grep -Fq 'android:name=".CaptureActivity"' "$MANIFEST"
+          grep -Fq 'android.intent.action.SEND' "$MANIFEST"
+          grep -Fq 'android:mimeType="text/plain"' "$MANIFEST"
+          grep -Fq 'android.permission.POST_NOTIFICATIONS' "$MANIFEST"
+          grep -Fq 'android.permission.FOREGROUND_SERVICE_DATA_SYNC' "$MANIFEST"
+          grep -Fq 'android:foregroundServiceType="dataSync"' "$MANIFEST"
+          grep -Fq 'requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}' "$CAPTURE"
+          grep -Fq 'shouldInterceptRequest' "$CAPTURE"
+          grep -Fq 'ServiceWorkerController' "$CAPTURE"
+          grep -Fq '@JavascriptInterface' "$CAPTURE"
+          grep -Fq 'setAllowFileAccess(false)' "$CAPTURE"
+          grep -Fq 'startForegroundService(download)' "$CAPTURE"
+          grep -Fq 'scheduleAutoPlayback()' "$CAPTURE"
+          grep -Fq 'startForeground(NOTIFICATION_ID' "$SERVICE"
+          grep -Fq 'NETWORK_WORKERS = 12' "$SERVICE"
+          grep -Fq 'MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4' "$SERVICE"
+          grep -Fq 'MediaStore.Video.Media.RELATIVE_PATH' "$SERVICE"
+
+      - name: Run Android JVM tests
+        run: gradle :android-capture:testDebugUnitTest --stacktrace
 
       - name: Build debug APK
         run: gradle :android-capture:assembleDebug --stacktrace
 
-      - name: Verify APK output
+      - name: Verify built APK manifest
         shell: bash
         run: |
           set -euo pipefail
-          test -s android-capture/build/outputs/apk/debug/android-capture-debug.apk
-          ls -lh android-capture/build/outputs/apk/debug/android-capture-debug.apk
+          APK=android-capture/build/outputs/apk/debug/android-capture-debug.apk
+          test -s "$APK"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print "$APK" > /tmp/manifest.xml
+          grep -Fq 'com.newwonwoo.downloader.capture.CaptureActivity' /tmp/manifest.xml
+          grep -Fq 'android.intent.action.SEND' /tmp/manifest.xml
+          grep -Fq 'android.permission.POST_NOTIFICATIONS' /tmp/manifest.xml
+          grep -Fq 'android.permission.FOREGROUND_SERVICE_DATA_SYNC' /tmp/manifest.xml
+          grep -Fq 'com.newwonwoo.downloader.capture.HlsDownloadService' /tmp/manifest.xml
+          grep -Fq 'dataSync' /tmp/manifest.xml
+          ls -lh "$APK"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -88,3 +105,78 @@ jobs:
           path: android-capture/build/outputs/apk/debug/android-capture-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+  runtime-smoke:
+    needs: build-apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: video-save-tool-debug-apk
+          path: /tmp/apk
+
+      - name: Install emulator tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools" "emulator" "system-images;android-35;google_apis;x86_64"
+
+      - name: Android 15 runtime smoke
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            set -euo pipefail
+            PKG=com.newwonwoo.downloader.capture
+            APK=$(find /tmp/apk -name '*.apk' -print -quit)
+            test -n "$APK"
+            adb install -r "$APK"
+            adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS
+            adb logcat -c
+
+            echo '--- share-intent smoke with reported URL ---'
+            adb shell am force-stop "$PKG"
+            adb shell am start -W \
+              -a android.intent.action.SEND \
+              -t text/plain \
+              --es android.intent.extra.TEXT 'https://njavtv.com/ko/dvaj-041-uncensored-leak' \
+              -n "$PKG/.CaptureActivity"
+            sleep 12
+            adb shell dumpsys activity activities | grep -F "$PKG/.CaptureActivity" || true
+            adb shell uiautomator dump /sdcard/window.xml >/dev/null 2>&1 || true
+            adb pull /sdcard/window.xml /tmp/window.xml >/dev/null 2>&1 || true
+            test -f /tmp/window.xml && sed 's/></>\n</g' /tmp/window.xml | grep -E '공유된 영상을|영상 주소를|보안 확인|자동 재생|직접 다운로드' || true
+
+            if adb logcat -d -b crash | grep -F "$PKG"; then
+              echo 'App crashed while handling the real shared URL'
+              exit 1
+            fi
+
+            echo '--- foreground-service notification smoke ---'
+            adb shell am start-foreground-service \
+              -n "$PKG/.HlsDownloadService" \
+              --es stream 'https://surrit.com/__runtime_smoke__/master.m3u8' \
+              --es page 'https://njavtv.com/ko/dvaj-041-uncensored-leak' \
+              --es title 'runtime-smoke'
+            sleep 2
+            adb shell dumpsys notification --noredact > /tmp/notifications.txt
+            grep -F "$PKG" /tmp/notifications.txt
+            grep -E 'video_downloads|영상 저장 도구|영상 저장 실패|직접 다운로드' /tmp/notifications.txt
+
+            LOG=$(adb logcat -d)
+            if echo "$LOG" | grep -E 'ForegroundServiceStartNotAllowedException|MissingForegroundServiceTypeException|SecurityException.*foreground' | grep -F "$PKG"; then
+              echo 'Foreground service failed Android runtime rules'
+              exit 1
+            fi
