@@ -31,6 +31,7 @@ import java.net.HttpURLConnection;
 import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.net.URL;
+import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.security.GeneralSecurityException;
@@ -106,8 +107,8 @@ public final class HlsDownloadService extends Service {
 
         FetchContext context = new FetchContext(
                 blank(page), blank(referer), blank(origin), blank(userAgent), blank(cookie));
-        startForeground(NOTIFICATION_ID, progressNotification("직접 다운로드 준비 중", 0, true));
-        if (jobThread != null && jobThread.isAlive()) return START_NOT_STICKY;
+        startForeground(NOTIFICATION_ID, progressNotification("스트림 연결 확인 중", 0, true));
+        if (jobThread != null && jobThread.isAlive()) return START_REDELIVER_INTENT;
 
         cancelled.set(false);
         acquireWakeLock();
@@ -128,7 +129,7 @@ public final class HlsDownloadService extends Service {
             }
         }, "direct-hls-download");
         jobThread.start();
-        return START_NOT_STICKY;
+        return START_REDELIVER_INTENT;
     }
 
     @Override
@@ -152,6 +153,8 @@ public final class HlsDownloadService extends Service {
         try {
             Playlist playlist = resolveMediaPlaylist(stream, context, 0);
             if (playlist.segments.isEmpty()) throw new IOException("empty playlist");
+            Log.i(TAG, "stream validated segments=" + playlist.segments.size());
+            notifications.notify(NOTIFICATION_ID, progressNotification("스트림 확인 완료 · 다운로드 시작", 1, false));
 
             Map<String, byte[]> keyCache = new ConcurrentHashMap<>();
             byte[] initBytes = null;
@@ -600,6 +603,9 @@ public final class HlsDownloadService extends Service {
 
     private static String userFailureMessage(Exception error) {
         String message = error.getMessage() == null ? "" : error.getMessage().toLowerCase(Locale.ROOT);
+        if (error instanceof UnknownHostException || message.contains("unable to resolve host") || message.contains("name not resolved")) {
+            return "영상 서버 주소를 찾지 못했습니다. 네트워크/DNS를 확인한 뒤 다시 시도해 주세요.";
+        }
         if (error instanceof SocketTimeoutException || message.contains("timed out")) {
             return "영상 서버 응답이 지연됐습니다. 다시 공유해서 시도해 주세요.";
         }
