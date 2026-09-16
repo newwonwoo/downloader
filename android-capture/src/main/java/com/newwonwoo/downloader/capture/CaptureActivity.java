@@ -254,7 +254,18 @@ public final class CaptureActivity extends Activity {
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, android.webkit.WebResourceError error) {
                 if (request != null && request.isForMainFrame() && !handedOff) {
-                    setStatus("페이지를 열지 못했습니다. 다시 시도해 주세요.");
+                    mainHandler.removeCallbacks(timeoutRunnable);
+                    String reason = "연결 오류";
+                    int code = 0;
+                    if (error != null) {
+                        code = error.getErrorCode();
+                        CharSequence description = error.getDescription();
+                        if (description != null && !description.toString().isBlank()) reason = description.toString().trim();
+                    }
+                    Log.w(TAG, "main frame load failed code=" + code + " reason=" + reason);
+                    setStatus("페이지를 열지 못했습니다 (" + reason + "). 네트워크/DNS를 확인한 뒤 다시 시도해 주세요.");
+                    updateAnalysisNotification("페이지 연결 실패 · " + reason);
+                    playButton.setVisibility(View.GONE);
                     retryButton.setVisibility(View.VISIBLE);
                 }
             }
@@ -361,8 +372,19 @@ public final class CaptureActivity extends Activity {
             String path = uri.getPath();
             if (!"https".equalsIgnoreCase(uri.getScheme()) || host == null || path == null) return null;
             if (uri.getRawUserInfo() != null || (uri.getPort() != -1 && uri.getPort() != 443)) return null;
-            if (!path.toLowerCase(Locale.ROOT).endsWith(".m3u8")) return null;
             if (isLocalOrPrivateHost(host)) return null;
+
+            String pathLower = path.toLowerCase(Locale.ROOT);
+            String queryLower = uri.getRawQuery() == null ? "" : uri.getRawQuery().toLowerCase(Locale.ROOT);
+            boolean manifestHint = pathLower.endsWith(".m3u8")
+                    || pathLower.contains("manifest")
+                    || pathLower.contains("playlist")
+                    || pathLower.contains("master");
+            boolean queryHint = queryLower.contains("m3u8")
+                    || queryLower.contains("format=hls")
+                    || queryLower.contains("type=hls")
+                    || queryLower.contains("manifest=hls");
+            if (!manifestHint && !queryHint) return null;
             return uri.toString();
         } catch (RuntimeException ignored) {
             return null;
@@ -533,8 +555,8 @@ public final class CaptureActivity extends Activity {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(download);
             else startService(download);
             CookieManager.getInstance().flush();
-            setStatus("직접 다운로드를 시작했습니다. 상태 표시줄에서 진행률을 확인할 수 있습니다.");
-            Toast.makeText(this, "다운로드 시작", Toast.LENGTH_LONG).show();
+            setStatus("다운로드 작업을 넘겼습니다. 스트림 연결을 확인한 뒤 진행률이 표시됩니다.");
+            Toast.makeText(this, "다운로드 준비 시작", Toast.LENGTH_LONG).show();
             if (canLeaveScreen) mainHandler.postDelayed(this::finish, 1_500L);
         } catch (RuntimeException error) {
             Log.e(TAG, "direct service start failed", error);
@@ -604,9 +626,15 @@ public final class CaptureActivity extends Activity {
         return value.contains("잠시만") || value.contains("just a moment") || value.contains("challenge") || value.contains("verify");
     }
 
+    private static String buildIdentity() {
+        return "v" + BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ") · "
+                + BuildConfig.BUILD_SHA + " · " + (BuildConfig.DEBUG ? "dev" : "release");
+    }
+
     private void setStatus(String message) {
-        if (Looper.myLooper() == Looper.getMainLooper()) statusView.setText(message);
-        else mainHandler.post(() -> statusView.setText(message));
+        String display = message + "\n" + buildIdentity();
+        if (Looper.myLooper() == Looper.getMainLooper()) statusView.setText(display);
+        else mainHandler.post(() -> statusView.setText(display));
     }
 
     private int dp(int value) {
