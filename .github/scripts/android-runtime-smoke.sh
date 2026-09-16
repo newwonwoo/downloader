@@ -21,9 +21,9 @@ dump_ui() {
   cp /tmp/window.xml runtime-window.xml
 }
 
-assert_no_crash() {
+assert_no_app_crash() {
   if adb logcat -d -b crash | grep -F "$PKG"; then
-    echo 'Application crashed while handling the reported URL'
+    echo 'Application process crashed while handling the reported URL'
     exit 1
   fi
 }
@@ -32,10 +32,15 @@ has_hls_candidate() {
   adb logcat -d | grep -F 'VideoSaveCapture' | grep -F 'HLS candidate host=' >/dev/null
 }
 
+stream_validated() {
+  adb logcat -d | grep -F 'VideoSaveDownload' | grep -F 'stream validated segments=' >/dev/null
+}
+
 target_external_blocked() {
-  dump_ui || return 1
-  if grep -Eiq 'ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_CONNECTION|ERR_TIMED_OUT|Webpage not available|Just a moment|Verify you are human|Cloudflare' /tmp/window.xml; then
-    return 0
+  if dump_ui; then
+    if grep -Eiq 'ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_CONNECTION|ERR_TIMED_OUT|Webpage not available|Just a moment|Verify you are human|Cloudflare' /tmp/window.xml; then
+      return 0
+    fi
   fi
   adb logcat -d | grep -F 'VideoSaveCapture' | grep -F 'main frame load failed' >/dev/null
 }
@@ -88,8 +93,19 @@ adb install -r "$APK"
 adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS
 adb logcat -c
 
+echo '--- build identity smoke ---'
+adb shell am force-stop "$PKG"
+adb shell am start -W -n "$PKG/.CaptureActivity"
+sleep 3
+dump_ui
+grep -F 'v2.0 (4)' /tmp/window.xml >/dev/null
+grep -F "$SHORT_SHA" /tmp/window.xml >/dev/null
+grep -F 'dev' /tmp/window.xml >/dev/null
+assert_no_app_crash
+
 echo '--- exact reported URL share-intent smoke ---'
 adb shell am force-stop "$PKG"
+adb logcat -c
 adb shell am start -W \
   -a android.intent.action.SEND \
   -t text/plain \
@@ -99,15 +115,11 @@ sleep 20
 
 adb exec-out screencap -p > runtime-before.png
 adb shell pidof "$PKG" >/dev/null
-dump_ui
-grep -F 'v2.0 (4)' /tmp/window.xml >/dev/null
-grep -F "$SHORT_SHA" /tmp/window.xml >/dev/null
-grep -F 'dev' /tmp/window.xml >/dev/null
 adb shell dumpsys notification --noredact > /tmp/notifications.txt
 grep -F "$PKG" /tmp/notifications.txt >/dev/null
-assert_no_crash
+assert_no_app_crash
 
-if ! has_hls_candidate && ! target_external_blocked; then
+if ! stream_validated && ! has_hls_candidate && ! target_external_blocked; then
   echo '--- helper playback attempt ---'
   if tap_text '영상 재생'; then
     sleep 10
@@ -116,23 +128,25 @@ if ! has_hls_candidate && ! target_external_blocked; then
   fi
 fi
 
-if ! has_hls_candidate && ! target_external_blocked; then
+if ! stream_validated && ! has_hls_candidate && ! target_external_blocked; then
   echo '--- no HLS yet; native taps inside actual WebView ---'
   for fraction in 0.20 0.35 0.50 0.70; do
     if tap_webview_fraction "$fraction"; then
       sleep 6
     fi
-    if has_hls_candidate || target_external_blocked; then
+    if stream_validated || has_hls_candidate || target_external_blocked; then
       break
     fi
   done
 fi
 
-echo '--- WebView/chromium diagnostics ---'
+echo '--- WebView/download diagnostics ---'
 adb logcat -d | grep -Ei 'VideoSaveCapture|VideoSaveDownload|chromium|AwContents|net::ERR|SSL' | tail -300 || true
 
-if has_hls_candidate; then
-  echo 'TARGET_CAPTURE=success'
+if stream_validated; then
+  echo 'TARGET_CAPTURE=stream_validated'
+elif has_hls_candidate; then
+  echo 'TARGET_CAPTURE=candidate_observed'
 elif target_external_blocked; then
   echo 'TARGET_CAPTURE=external_blocked'
   echo 'The reported external page is unavailable/challenged in the CI emulator; app runtime smoke remains valid.'
@@ -142,9 +156,13 @@ else
   exit 1
 fi
 
-assert_no_crash
+if adb logcat -d | grep -F 'VideoSaveDownload' | grep -F 'direct HLS failed' >/dev/null; then
+  echo 'Direct HLS service failed during the smoke observation window'
+  exit 1
+fi
+
+assert_no_app_crash
 adb shell input keyevent KEYCODE_HOME
 sleep 5
-adb shell pidof "$PKG" >/dev/null || true
 adb shell dumpsys notification --noredact > /tmp/notifications-background.txt
 grep -F "$PKG" /tmp/notifications-background.txt >/dev/null
